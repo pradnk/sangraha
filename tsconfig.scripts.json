@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    /*
+     * The scripts run under `tsx`, which type-strips rather than type-checks —
+     * so without this nothing checked them at all, and `scripts/purge.ts`
+     * irreversibly destroys data. A duplicate declaration in `verify-ui.ts`
+     * reached runtime before this existed.
+     *
+     * `DOM` is here for the browser-driving checks: they hold a `WebSocket` and
+     * pass expressions to a page, and `ES2022` alone does not declare it.
+     */
+    "lib": ["ES2022", "DOM"],
+    "types": ["node"],
+    /*
+     * `verify-ui.ts` reaches for `require` to probe for a Chrome binary before
+     * committing to an import. Allowed here and nowhere else.
+     */
+    "allowJs": true
+  },
+  "include": ["scripts/**/*.ts", "load-env.d.mts"]
+}

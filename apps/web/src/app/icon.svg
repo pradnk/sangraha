@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Sangraha">
+  <!--
+    Sangraha — "collection".
+
+    Scattered points gathering into one. Five marks: four small ones drawing
+    inward from the corners of a diamond, and a solid centre they resolve into.
+    That is the whole idea of the product in one figure — many observations from
+    many places, collected into something whole.
+
+    Built to survive 16px. No strokes thinner than 3 units, no detail that
+    depends on antialiasing, and the centre dot alone still reads as a mark when
+    everything else blurs together.
+  -->
+  <rect width="64" height="64" rx="14" fill="#1559ab"/>
+
+  <!-- The four gathered points. Slightly graded in size so the eye travels
+       inward rather than reading them as a static ring. -->
+  <circle cx="32" cy="13" r="4.5" fill="#ffffff" opacity="0.55"/>
+  <circle cx="51" cy="32" r="4.5" fill="#ffffff" opacity="0.7"/>
+  <circle cx="32" cy="51" r="4.5" fill="#ffffff" opacity="0.85"/>
+  <circle cx="13" cy="32" r="4.5" fill="#ffffff" opacity="0.7"/>
+
+  <!-- What they collect into. -->
+  <circle cx="32" cy="32" r="10" fill="#ffffff"/>
+</svg>

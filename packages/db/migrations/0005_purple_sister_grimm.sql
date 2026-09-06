@@ -1,0 +1,1 @@
+ALTER TABLE "form_fields" ADD COLUMN "is_unique" boolean DEFAULT false NOT NULL;

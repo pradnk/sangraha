@@ -1,0 +1,51 @@
+{
+  "name": "sangraha",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Sangraha \u2014 configurable data collection for the social sector",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "npm run dev --workspace=@sangraha/web",
+    "dev:alt": "NEXT_DIST_DIR=.next-alt PORT=3100 npm run dev --workspace=@sangraha/web",
+    "build": "NEXT_DIST_DIR=.next-build npm run build --workspace=@sangraha/web",
+    "typecheck": "tsc --noEmit -p packages/form-engine && tsc --noEmit -p packages/db && tsc --noEmit -p apps/web && tsc --noEmit -p tsconfig.scripts.json",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "infra:up": "docker compose -f infra/docker-compose.yml up -d",
+    "infra:down": "docker compose -f infra/docker-compose.yml down",
+    "infra:reset": "docker compose -f infra/docker-compose.yml down -v && npm run infra:up",
+    "db:generate": "npm run generate --workspace=@sangraha/db",
+    "db:migrate": "npm run migrate --workspace=@sangraha/db",
+    "db:seed": "npm run seed --workspace=@sangraha/db",
+    "db:studio": "npm run studio --workspace=@sangraha/db",
+    "db:views": "tsx scripts/regenerate-views.ts",
+    "db:free": "tsx scripts/free-connections.ts",
+    "psql": "docker exec -it mis-postgres psql -U mis -d mis",
+    "data": "tsx scripts/show-data.ts",
+    "login:check": "tsx scripts/check-login.ts",
+    "verify": "tsx scripts/verify-e2e.ts",
+    "verify:ui": "tsx scripts/verify-ui.ts",
+    "session": "tsx scripts/dev-session.ts",
+    "org:create": "tsx scripts/create-org.ts",
+    "org:delete": "tsx scripts/delete-org.ts",
+    "start": "NEXT_DIST_DIR=.next-build npm run start --workspace=@sangraha/web",
+    "db:deploy": "tsx scripts/deploy-migrate.ts",
+    "vercel-build": "npm run db:deploy && npm run build --workspace=@sangraha/web",
+    "db:purge": "tsx scripts/purge.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "eslint": "^9.17.0",
+    "prettier": "^3.4.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}

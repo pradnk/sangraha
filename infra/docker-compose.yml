@@ -1,0 +1,76 @@
+# Local development + self-hosting baseline.
+# An NGO self-hosting this needs exactly these containers plus the app image.
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: mis-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: mis
+      POSTGRES_PASSWORD: mis_dev_password
+      POSTGRES_DB: mis
+    ports:
+      - '5432:5432'
+    # Reap connections whose client is gone.
+    #
+    # A dev server or test run that is killed rather than stopped leaves its
+    # pool open, and Postgres has no way to know: the socket stays half-open
+    # until TCP keepalive gives up, which is two hours. Do that a few times and
+    # the next run fails with "remaining connection slots are reserved for roles
+    # with the SUPERUSER attribute" — which looks exactly like a code regression
+    # and is not one.
+    #
+    # This cannot be fixed on the client. postgres.js enforces its own
+    # `idle_timeout` in the process that opened the pool, and that process is
+    # the one that died. Only the server can clean up after it.
+    #
+    # Ten minutes is far longer than any request and shorter than the gap
+    # between two test runs. A live pool reconnects transparently if it is ever
+    # idle that long, and a session inside a transaction is never touched.
+    command: -c idle_session_timeout=600000
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./postgres-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U mis -d mis']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # S3-compatible object storage for photos, files and signatures.
+  # In SaaS this is Cloudflare R2; the application code is identical.
+  minio:
+    image: minio/minio:latest
+    container_name: mis-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: mis
+      MINIO_ROOT_PASSWORD: mis_dev_password
+    ports:
+      - '9000:9000'
+      - '9001:9001'
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ['CMD', 'mc', 'ready', 'local']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Creates the attachments bucket on first boot so the app has somewhere to write.
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 mis mis_dev_password &&
+      mc mb --ignore-existing local/mis-attachments &&
+      echo 'bucket ready'
+      "
+
+volumes:
+  postgres_data:
+  minio_data:

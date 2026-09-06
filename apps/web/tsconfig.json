@@ -1,0 +1,47 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": [
+      "ES2022",
+      "DOM",
+      "DOM.Iterable"
+    ],
+    "jsx": "preserve",
+    "allowJs": true,
+    "isolatedModules": true,
+    "moduleResolution": "bundler",
+    "plugins": [
+      {
+        "name": "next"
+      }
+    ],
+    // Re-declared so `paths` resolve against this app rather than the repo
+    // root, which is where the inherited baseUrl points.
+    "baseUrl": ".",
+    "paths": {
+      "@sangraha/form-engine": [
+        "../../packages/form-engine/src/index.ts"
+      ],
+      "@sangraha/db": [
+        "../../packages/db/src/index.ts"
+      ],
+      "@sangraha/db/*": [
+        "../../packages/db/src/*"
+      ],
+      "@/*": [
+        "./src/*"
+      ]
+    },
+    "incremental": true
+  },
+  "include": [
+    ".next-build/types/**/*.ts",
+    ".next/types/**/*.ts",
+    "next-env.d.ts",
+    "src/**/*",
+    ".next-alt/types/**/*.ts"
+  ],
+  "exclude": [
+    "node_modules"
+  ]
+}

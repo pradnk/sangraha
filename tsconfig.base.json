@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    // Workspace packages are consumed as TypeScript source by Next.js, tsx and
+    // vitest, so there is no build step and no composite project graph to keep
+    // in sync. One less thing to get wrong when someone new picks this up.
+    "baseUrl": ".",
+    "paths": {
+      "@sangraha/form-engine": ["packages/form-engine/src/index.ts"],
+      "@sangraha/db": ["packages/db/src/index.ts"],
+      "@sangraha/db/schema": ["packages/db/src/schema/index.ts"],
+      "@sangraha/db/analytics": ["packages/db/src/analytics/index.ts"]
+    }
+  },
+  "exclude": ["node_modules", "dist", ".next"]
+}

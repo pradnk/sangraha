@@ -1,0 +1,52 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    /* Stops iOS Safari zooming when an input is focused, which on a small
+       screen leaves the worker scrolled somewhere unexpected. */
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    @apply bg-white text-slate-900 antialiased;
+  }
+
+  /* Applied to the field layout. Everything inside inherits the larger base
+     size rather than each component having to remember it. */
+  .theme-field {
+    @apply text-field-base;
+  }
+
+  /* A visible focus ring is not optional here: a worker tabbing through with a
+     hardware keyboard, or using switch access, has nothing else to go on. */
+  :focus-visible {
+    @apply outline-none ring-4 ring-brand-500/40 ring-offset-2;
+  }
+
+  /* Honour a reduced-motion preference; vestibular triggers are not worth a
+     transition. */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
+@layer components {
+  /* The standard field-UI control surface: full width, unmissable target. */
+  .field-control {
+    @apply min-h-tap w-full rounded-field border-2 border-slate-300 bg-white px-4
+           text-field-base text-slate-900 placeholder:text-slate-400
+           focus:border-brand-500;
+  }
+
+  .field-button {
+    @apply flex min-h-tap w-full items-center justify-center gap-3 rounded-field
+           px-5 text-field-base font-semibold transition-colors;
+  }
+}
