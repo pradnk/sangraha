@@ -84,11 +84,28 @@ build reads the environment once, so an already-built deployment will not pick
 up a new value until you deploy again.
 
 **If the build cannot create the role**, create it yourself and deploy again —
-on Neon that is **Branches → Roles**, with the password you put in
-`DATABASE_APP_URL`. Give it no attributes at all; the migration grants it
-everything it needs and stops trying to create it once it exists. Neon handles
-role changes in its own control plane rather than in Postgres, and a refusal
-there arrives as an error that names neither the role nor the reason:
+in Neon's **SQL Editor**, with the password you put in `DATABASE_APP_URL`:
+
+```sql
+CREATE ROLE mis_app LOGIN PASSWORD '<the password in DATABASE_APP_URL>';
+```
+
+Exactly that, with no attribute clauses. The defaults are all off, which is what
+is wanted, and `NOBYPASSRLS` may only be written by a superuser — so spelling
+out the safe thing is itself rejected. The migration grants the role everything
+it needs and stops trying to create it once it exists.
+
+**Not Neon's Roles UI.** A role created there arrives holding `BYPASSRLS`, and
+only a superuser can revoke that — which nobody is on Neon, so it cannot be
+fixed afterwards. `BYPASSRLS` on the role that serves requests makes every
+policy in `020-rls.sql` decorative, so the migration refuses to proceed against
+such a role rather than deploying something that isolates nothing. If you have
+already made one, point `DATABASE_APP_URL` at a fresh role under a new name
+created as above — the migration grants whatever name it is given, and a new
+name avoids having to clear the old one's grants before dropping it.
+
+Neon handles role changes in its own control plane rather than in Postgres, and
+a refusal there arrives as an error that names neither the role nor the reason:
 
 ```
 XX000  ddl_forwarding.c  SendDeltasToControlPlane

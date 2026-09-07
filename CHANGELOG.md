@@ -5,6 +5,37 @@ the two whole-tree reviews and the defects they turned up. Everything before
 that is condensed to a line, because the detail has been superseded by the code
 and by [`issues.md`](./issues.md), which records the decisions carried forward.
 
+### 2026-09-07 — A role from Neon's Roles UI cannot be the role that serves requests
+
+Following the advice added earlier the same day — create the role in the console
+if the build cannot — produced a role holding `BYPASSRLS`, and the migration
+refused it:
+
+```
+Error: Role "mis_app" holds BYPASSRLS, and it could not be revoked.
+permission denied to alter role
+```
+
+Which is the check doing its job. `BYPASSRLS` on the role that serves every
+request makes every policy in `020-rls.sql` decorative, and only a superuser can
+revoke it — nobody is one on Neon, so it cannot be fixed after the fact. The
+advice was wrong, not the refusal: **Neon's Roles UI is the wrong way to create
+this role**, and a bare `CREATE ROLE` in its SQL editor is the right one, where
+the attribute defaults are all off.
+
+Both messages now say so, and say what to do about a role that already has it:
+point `DATABASE_APP_URL` at a fresh role under a new name, since the migration
+grants whatever name it is given and a new name avoids having to clear the old
+one's grants before dropping it. `NOBYPASSRLS` is deliberately not suggested as
+a fix — writing it requires superuser too, so spelling out the safe thing is
+itself rejected.
+
+Reproduced locally against a non-superuser owner and a role created with
+`BYPASSRLS`, which fails identically, and the recommended recovery verified
+through: a bare `CREATE ROLE` issued *by that non-superuser owner* yields all
+four attributes off, the migration then completes, and the role connects seeing
+no rows without an RLS context — which is what RLS applying looks like.
+
 ### 2026-09-07 — Neon refused to create the application role, twice over
 
 The schema migrated cleanly against Neon and then stopped on the statement that
