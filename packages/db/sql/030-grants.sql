@@ -63,3 +63,57 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA analytics
   GRANT SELECT ON TABLES TO @APP_ROLE@;
 ALTER DEFAULT PRIVILEGES IN SCHEMA analytics
   GRANT EXECUTE ON FUNCTIONS TO @APP_ROLE@;
+
+/*
+ * Reaching the extensions, wherever the provider put them.
+ *
+ * `000-extensions.sql` says CREATE EXTENSION IF NOT EXISTS, and on a managed
+ * provider the "if not exists" branch is the one that runs: Supabase ships
+ * pg_trgm and pgcrypto pre-installed in a schema called `extensions`, so our
+ * statement is a silent no-op and the operators never land in `public`.
+ *
+ * That is invisible during a migration and invisible to the owner, whose
+ * search_path already includes that schema — the trigram index on
+ * subjects.display_name builds perfectly. It surfaces later, as a field worker
+ * searching for a person and getting `operator does not exist: text % text`,
+ * because the role serving the request cannot see the operator.
+ *
+ * Discovered rather than hardcoded. `extensions` is Supabase's name for it,
+ * `public` is what a plain Postgres does, and neither is worth asserting when
+ * the catalogue knows.
+ */
+DO $$
+DECLARE
+  extension_schemas text[];
+  target text;
+  path text;
+BEGIN
+  SELECT coalesce(array_agg(DISTINCT n.nspname), '{}')
+    INTO extension_schemas
+    FROM pg_extension e
+    JOIN pg_namespace n ON n.oid = e.extnamespace
+   WHERE e.extname IN ('ltree', 'pg_trgm', 'pgcrypto')
+     AND n.nspname <> 'public';
+
+  FOREACH target IN ARRAY extension_schemas LOOP
+    EXECUTE format('GRANT USAGE ON SCHEMA %I TO @APP_ROLE@', target);
+  END LOOP;
+
+  SELECT string_agg(quote_ident(s), ', ')
+    INTO path
+    FROM unnest(array_prepend('public', extension_schemas)) AS s;
+
+  /*
+   * A warning, not a failure. Altering a role's settings is control-plane DDL
+   * on some providers and simply refused, and the only cost of that is
+   * unqualified extension operators — which is a broken search box, not a
+   * broken tenant boundary. Refusing to deploy over it would be the wrong
+   * trade.
+   */
+  BEGIN
+    EXECUTE format('ALTER ROLE @APP_ROLE@ SET search_path = %s', path);
+  EXCEPTION
+    WHEN OTHERS THEN
+      RAISE WARNING 'could not set search_path for @APP_ROLE@ to %: %', path, SQLERRM;
+  END;
+END $$;

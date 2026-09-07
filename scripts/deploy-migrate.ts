@@ -23,6 +23,7 @@ import { spawnSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import postgres from 'postgres';
+import { unpooledConnection } from '../packages/db/src/client';
 import { loadRootEnv } from '../load-env.mjs';
 
 loadRootEnv();
@@ -54,7 +55,22 @@ async function main(): Promise<void> {
     return;
   }
 
-  const client = postgres(process.env.DATABASE_URL, { max: 1, onnotice: () => {} });
+  /*
+   * The lock is session-scoped, so this connection must not be a transaction
+   * pooler's. `pg_try_advisory_lock` holds until the session ends or the lock
+   * is released — but a transaction pooler hands the next statement to a
+   * different backend, so the lock would be taken on one, the migration would
+   * run unprotected, and the unlock would return false against a third. Two
+   * concurrent deployments would then both migrate, which is the single thing
+   * this script exists to prevent, and nothing would report an error.
+   *
+   * `unpooledConnection` gives session mode on Supabase and the direct
+   * endpoint on Neon; `DATABASE_DIRECT_URL` overrides both. Where there is no
+   * pooler there is nothing to avoid and this is the same string.
+   */
+  const ownerUrl = process.env.DATABASE_URL;
+  const lockUrl = unpooledConnection(ownerUrl) ?? ownerUrl;
+  const client = postgres(lockUrl, { max: 1, prepare: false, onnotice: () => {} });
 
   try {
     console.log('→ waiting for the migration lock');

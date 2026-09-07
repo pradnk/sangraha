@@ -1,7 +1,24 @@
 import { drizzle } from 'drizzle-orm/postgres-js';
 import { sql } from 'drizzle-orm';
 import postgres from 'postgres';
+import { resolveDatabaseEnv } from '../../../load-env.mjs';
 import * as schema from './schema/index';
+
+/*
+ * Canonicalise the provider's variable names before anything reads them.
+ *
+ * `loadRootEnv()` does this too, but only where it is called: next.config.ts
+ * runs at build time and a built serverless function never sees its
+ * process.env. So on a host that injects `POSTGRES_URL` and no `DATABASE_URL`
+ * — Supabase's Vercel integration — the build would succeed, migrations would
+ * run, and the deployed app would then throw `DATABASE_URL is not set` on the
+ * first request. Doing it here means it happens wherever a connection is
+ * opened, which is the only place it actually matters.
+ *
+ * Module scope rather than inside getDb(), so `looksPooled` and the health
+ * endpoint see the same resolved values.
+ */
+resolveDatabaseEnv();
 
 export type Database = ReturnType<typeof createDatabase>;
 
@@ -79,6 +96,12 @@ function isServerless(): boolean {
  *
  * Recognises the shapes the common providers use. `DATABASE_POOLED` overrides
  * it for anything unusual.
+ *
+ * Supabase's pooler host is not enough on its own, because the port is the
+ * whole of the distinction there: 6543 pools per transaction and 5432 per
+ * session, and a session belongs to one backend for its lifetime, so prepared
+ * statements are fine on it. Keying on the host would quietly give up prepared
+ * statements on every session-mode connection.
  */
 export function looksPooled(connectionString: string): boolean {
   const override = process.env.DATABASE_POOLED?.trim().toLowerCase();
@@ -110,17 +133,37 @@ export function looksPooled(connectionString: string): boolean {
  * statement that creates a role does not.
  *
  * `DATABASE_DIRECT_URL` wins if set, for a provider whose pooled host is not
- * derivable. Otherwise only Neon's convention is rewritten, because it is
- * documented and unambiguous — the pooled endpoint is the direct one with
- * `-pooler` appended. Supabase moves ports and sometimes the username too, so
- * it is left to the explicit variable rather than guessed at.
+ * derivable. Otherwise two conventions are rewritten, both documented and
+ * unambiguous:
+ *
+ *   Neon      the pooled endpoint is the direct one with `-pooler` appended.
+ *   Supabase  the same pooler host answers on two ports — 6543 pools per
+ *             transaction, 5432 per session. Moving to 5432 is what "without
+ *             the transaction pooler" means there.
+ *
+ * Supabase's *direct* host (`db.<ref>.supabase.co`) is deliberately not the
+ * target. It resolves to IPv6 only unless the IPv4 add-on is enabled, and a
+ * Vercel function has no IPv6 egress — so rewriting to it would turn a working
+ * fallback into a connection that cannot be opened at all, in exactly the
+ * deployment that needs the fallback. Session mode is on the pooler host,
+ * reachable over IPv4, and holds one backend for the connection's lifetime,
+ * which is all this is for.
  */
+const SUPABASE_POOLER = '.pooler.supabase.com';
+
 export function unpooledConnection(connectionString: string): string | null {
   const explicit = process.env.DATABASE_DIRECT_URL?.trim();
   if (explicit) return explicit === connectionString ? null : explicit;
 
-  if (!connectionString.includes('-pooler.')) return null;
-  return connectionString.replace('-pooler.', '.');
+  if (connectionString.includes('-pooler.')) {
+    return connectionString.replace('-pooler.', '.');
+  }
+
+  if (connectionString.includes(SUPABASE_POOLER) && connectionString.includes(':6543')) {
+    return connectionString.replace(':6543', ':5432');
+  }
+
+  return null;
 }
 
 export function connectionProfile(connectionString: string): ConnectionProfile {
@@ -245,12 +288,27 @@ export async function withContext<T>(
 ): Promise<T> {
   const db = getDb();
   return db.transaction(async (tx) => {
-    // set_config's third argument (`true`) makes it transaction-local.
-    // Parameterised rather than interpolated, so a crafted org id cannot
-    // become SQL.
-    await tx.execute(sql`select set_config('app.org_id', ${context.orgId}, true)`);
-    await tx.execute(sql`select set_config('app.user_id', ${context.userId}, true)`);
-    await tx.execute(sql`select set_config('app.role', ${context.role}, true)`);
+    /*
+     * One statement, not three, because each one is a network round trip.
+     *
+     * `set_config`'s third argument (`true`) makes it transaction-local, and
+     * the values are parameterised rather than interpolated so a crafted org id
+     * cannot become SQL. Both of those were already true; what changed is the
+     * count. Three separate awaits cost three round trips on every query that
+     * serves a request, which is invisible against a database on localhost and
+     * was three quarters of a second against one across an ocean.
+     *
+     * `BEGIN` and `COMMIT` are still one each, so this is four round trips
+     * rather than six. The rest of the answer is not here — it is putting the
+     * functions in the same region as the database, which is what makes a round
+     * trip cost 2ms instead of 240ms. This helps either way.
+     */
+    await tx.execute(sql`
+      select
+        set_config('app.org_id', ${context.orgId}, true),
+        set_config('app.user_id', ${context.userId}, true),
+        set_config('app.role', ${context.role}, true)
+    `);
     return work(tx);
   });
 }

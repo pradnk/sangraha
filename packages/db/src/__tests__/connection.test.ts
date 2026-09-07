@@ -8,6 +8,8 @@
  * ordinary testing, so the decision itself is what gets tested.
  */
 import { afterEach, describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { connectionProfile, looksPooled, unpooledConnection } from '../client';
 
 const ENV_KEYS = [
@@ -36,6 +38,15 @@ describe('detecting a pooled connection', () => {
     // a hand-rolled PgBouncer usually gets the query parameter.
     expect(looksPooled('postgres://u:p@ep-x-123-pooler.aws.neon.tech/db')).toBe(true);
     expect(looksPooled('postgres://u:p@db.abc.supabase.co:6543/postgres')).toBe(true);
+    expect(
+      looksPooled('postgres://postgres.abc:p@aws-0-ap-south-1.pooler.supabase.com:6543/postgres'),
+    ).toBe(true);
+    // Session mode, on the same host. One backend for the connection's
+    // lifetime, so prepared statements are fine and giving them up would be
+    // pure loss.
+    expect(
+      looksPooled('postgres://postgres.abc:p@aws-0-ap-south-1.pooler.supabase.com:5432/postgres'),
+    ).toBe(false);
     expect(looksPooled('postgres://u:p@host/db?pgbouncer=true')).toBe(true);
   });
 
@@ -74,6 +85,17 @@ describe('reaching the same database without the pooler', () => {
   });
 
   it('does not guess at a pooled shape it cannot rewrite', () => {
+    // Supabase's own direct host is deliberately never the target: it resolves
+    // to IPv6 only without the IPv4 add-on, and a Vercel function has no IPv6
+    // egress, so rewriting to it would replace a working fallback with a
+    // connection that cannot be opened. Session mode on the pooler host is
+    // what "without the transaction pooler" means there.
+    expect(
+      unpooledConnection(
+        'postgres://postgres.abc:p@aws-0-ap-south-1.pooler.supabase.com:6543/postgres',
+      ),
+    ).toBe('postgres://postgres.abc:p@aws-0-ap-south-1.pooler.supabase.com:5432/postgres');
+
     // Supabase moves the port and sometimes the username too. Guessing that
     // would produce a plausible URL pointing at nothing; the explicit variable
     // is the answer there.
@@ -91,6 +113,50 @@ describe('reaching the same database without the pooler', () => {
     // warning about falling back to a direct connection would be a lie.
     process.env.DATABASE_DIRECT_URL = DIRECT;
     expect(unpooledConnection(DIRECT)).toBeNull();
+  });
+});
+
+describe('round trips per request', () => {
+  /*
+   * Every statement is a round trip, and a round trip costs whatever the
+   * distance to the database costs.
+   *
+   * This shipped as three separate `set_config` awaits, which is invisible
+   * against Postgres on localhost — 1ms became 3ms — and was three quarters of
+   * a second against a database across an ocean, on every query that serves a
+   * request. Measured against a real Postgres with `log_statement='all'`: six
+   * statements before (begin, three set_config, the query, commit), four after.
+   *
+   * The distance is the larger half of that problem and is fixed in
+   * `vercel.json` below, not here. This is the half that is in the code.
+   */
+  const clientSource = readFileSync(join(import.meta.dirname, '..', 'client.ts'), 'utf8');
+
+  it('sets the whole RLS context in one statement, not one each', () => {
+    const fn = clientSource.slice(clientSource.indexOf('export async function withContext'));
+    const body = fn.slice(0, fn.indexOf('\n}') + 2);
+
+    expect(body.match(/tx\.execute\(/g) ?? [], 'one execute, carrying all three').toHaveLength(1);
+    for (const setting of ['app.org_id', 'app.user_id', 'app.role']) {
+      expect(body, `${setting} still has to be set`).toContain(setting);
+    }
+  });
+
+  it('states a function region, so it cannot default to the far side of the world', () => {
+    /*
+     * Vercel puts functions in Washington DC (`iad1`) unless told otherwise,
+     * and a project whose database is in Singapore then pays ~240ms per round
+     * trip — four of them per query, plus connection setup. It is not a value
+     * this test can check for correctness; it can only insist the decision was
+     * made, because the default is silent and wrong for every deployment whose
+     * database is not on the US east coast.
+     */
+    const config = JSON.parse(
+      readFileSync(join(import.meta.dirname, '..', '..', '..', '..', 'vercel.json'), 'utf8'),
+    ) as { regions?: string[] };
+
+    expect(config.regions, 'vercel.json should name the database\'s region').toBeInstanceOf(Array);
+    expect(config.regions!.length).toBeGreaterThan(0);
   });
 });
 

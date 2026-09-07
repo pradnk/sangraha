@@ -234,11 +234,20 @@ connection string, three required environment variables (`DATABASE_URL`,
 photo, file or signature questions. `GET /api/health` tells you whether it
 worked — treat `rlsEnabled: false` as an outage, not a warning.
 
+Two of those three usually need no typing. Supabase's Vercel integration injects
+`POSTGRES_URL` and friends, which are read as `DATABASE_URL` when it is absent;
+and setting `DATABASE_APP_PASSWORD` derives `DATABASE_APP_URL` from it, keeping
+the host, the pooler and — on Supabase — the project reference the pooler
+requires in the username. Writing that URL by hand is where it gets left off.
+Neither is ever derived from the owner's password: the whole point of the second
+role is that RLS applies to it, and the owner bypasses RLS without failing.
+
 Import the repository into Vercel and set **Root Directory** to `apps/web`.
-`vercel.json` is written for that and deliberately leaves `outputDirectory`
-unset — Vercel resolves it relative to Root Directory, so naming
-`apps/web/.next` there makes the deploy fail on a path with `apps/web` in it
-twice. Moving Root Directory to the repository root means changing `vercel.json`
+`vercel.json` is written for that and sets `outputDirectory` to `.next`, not
+`apps/web/.next` — Vercel resolves it relative to Root Directory, so the longer
+path names `apps/web` twice and the deploy fails on it. It is stated rather than
+omitted because the dashboard has its own field for the same setting, and the
+file only wins over it if the key is there. Moving Root Directory to the repository root means changing `vercel.json`
 with it; [docs/deploying.md](./docs/deploying.md) has both.
 
 Full instructions, including the environment variable table and the reasoning

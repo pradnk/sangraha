@@ -23,6 +23,37 @@ Neon that is the host containing `-pooler`; on Supabase it is port `6543`. The
 app detects both and adjusts automatically — pool size, prepared statements and
 idle timeouts all change.
 
+### On Supabase
+
+Three things differ enough to be worth stating, and all three are silent when
+they go wrong.
+
+**The pooler carries the project reference in the username.** One pooler fronts
+every project, so it connects as `postgres.abcdefghijkl`, not `postgres`, and
+strips the suffix before Postgres sees it. The application role is
+`mis_app.abcdefghijkl` for the same reason. The app knows the rule and derives
+the role name back out — but a URL written by hand without the suffix is
+refused, and one where the suffix is mistaken for part of the role name grants
+every privilege to a role that does not exist.
+
+**Do not use the direct host on Vercel.** `db.<ref>.supabase.co` resolves to
+IPv6 only unless the IPv4 add-on is enabled, and Vercel functions have no IPv6
+egress. This is why `POSTGRES_URL` is preferred over `POSTGRES_URL_NON_POOLING`
+when both are present. Where an unpooled connection is genuinely needed — the
+migration lock, role DDL — the app uses **session mode**, which is the same
+pooler host on port `5432`: reachable over IPv4, and one backend held for the
+connection's lifetime, which is the property that was actually wanted.
+
+**Put the functions in the database's region.** A Supabase project in Mumbai
+(`ap-south-1`) wants `"regions": ["bom1"]` in `vercel.json`. Vercel defaults to
+Washington DC, and the default is silent: every query pays four round trips, so
+a 240ms distance becomes a second of latency on a page that works perfectly.
+
+**The Vercel integration sets its own variable names** — `POSTGRES_URL`,
+`POSTGRES_URL_NON_POOLING`, `POSTGRES_HOST` and so on, and no `DATABASE_URL`.
+Those are read automatically; there is nothing to copy across. The build log
+says which variable each connection came from.
+
 ## 2. Import the repository into Vercel
 
 Set **Root Directory** to `apps/web`. Vercel detects Next.js, installs from the
@@ -60,12 +91,15 @@ above, and in the other with `Missing script: "vercel-build"`.
 
 | Variable | |
 |---|---|
-| `DATABASE_URL` | **Required.** Pooled string, owner role. Runs migrations and generates analytics views. |
-| `DATABASE_APP_URL` | **Required.** Same database as `mis_app`, the non-owner role migrations create. Row-Level Security only applies to this one. |
+| `DATABASE_URL` | **Required**, unless the provider set `POSTGRES_URL` or `POSTGRES_URL_NON_POOLING`, which are read in that order. Pooled string, owner role. Runs migrations and generates analytics views. |
+| `DATABASE_APP_URL` | **Required**, unless `DATABASE_APP_PASSWORD` is set. Same database as `mis_app`, the non-owner role migrations create. Row-Level Security only applies to this one. |
+| `DATABASE_APP_PASSWORD` | The password for that role, and nothing else. The rest of the URL is taken from `DATABASE_URL`, tenant suffix included. Simpler and harder to get wrong than writing the URL out. |
+| `DATABASE_APP_ROLE` | Optional. The role's name, if `mis_app` is unwanted. Names the role Postgres sees, not the string used to connect. |
 | `AUTH_SECRET` | **Required.** `openssl rand -base64 32`. At least 32 characters, and not a placeholder — it is rejected by name. See below. |
 | `SIGNUP_MODE` | Optional. Defaults to `closed` in production — see below. |
 | `GOOGLE_TRANSLATE_CREDENTIALS` | Optional, base64 service-account JSON. `GOOGLE_APPLICATION_CREDENTIALS` is a file path and will not work here. |
-| `DATABASE_DIRECT_URL` | Optional. An unpooled connection, used only for role changes a transaction pooler will not carry. Derived from `DATABASE_URL` on Neon without being set. |
+| `DATABASE_DIRECT_URL` | Optional. A session-scoped connection, used for the migration lock and for role changes a transaction pooler will not carry. Derived without being set on Neon (the `-pooler` host, minus the `-pooler`) and on Supabase (the same pooler host on port `5432`). |
+| `DATABASE_ENV_QUIET` | Optional. `1` stops the loader logging which variable each connection was resolved from. |
 
 **`AUTH_SECRET` is not optional and has no default.** It signs every session
 cookie and peppers the consent pseudonyms, so a guessable value lets anyone mint
@@ -77,13 +111,42 @@ passed the length check, so an installation that never replaced it worked
 perfectly while signing sessions with a public string.
 
 `DATABASE_APP_URL` is a chicken-and-egg: the `mis_app` role does not exist until
-the first migration creates it. Set it to the password you intend to use — the
-migration creates the role with that password from the URL you supply. It is the
-same host and database as `DATABASE_URL`; only the role differs.
+the first migration creates it. Give it the password you intend to use — the
+migration creates the role with that password. It is the same host and database
+as `DATABASE_URL`; only the role differs.
+
+The short way, and the one to prefer, is to set only the password and let the
+rest be derived from `DATABASE_URL`:
+
+```
+DATABASE_APP_PASSWORD=<a-password-you-choose>
+```
+
+That is the whole of it on any provider. It keeps the host, the port, the
+database and — on Supabase — the project reference in the username, which is
+the piece a hand-written URL loses.
+
+Written out in full instead, it is:
 
 ```
 postgresql://mis_app:<a-password-you-choose>@<same-host>/<same-database>?sslmode=require
 ```
+
+and on Supabase's pooler, with the project reference the pooler requires:
+
+```
+postgresql://mis_app.<project-ref>:<a-password-you-choose>@aws-0-ap-south-1.pooler.supabase.com:6543/postgres
+```
+
+**Copy the host from the dashboard rather than from here.** The region is part
+of it, and newer projects are `aws-1-` rather than `aws-0-`.
+
+**Strip any `?supa=`, `?pgbouncer=` or `?connection_limit=` from a string you
+paste in.** They are markers for other tools, and the driver forwards every
+query parameter it does not recognise to the server as a startup parameter, so
+Postgres answers with `unrecognized configuration parameter` and the error names
+the parameter rather than the tool that added it. The loader removes these
+automatically; the note is here for anyone connecting with `psql` and wondering.
 
 **It cannot be `DATABASE_URL`, and the build will not start without it.** Every
 managed provider hands out one connection string, so reusing it is the natural
@@ -99,11 +162,17 @@ build reads the environment once, so an already-built deployment will not pick
 up a new value until you deploy again.
 
 **If the build cannot create the role**, create it yourself and deploy again —
-in Neon's **SQL Editor**, with the password you put in `DATABASE_APP_URL`:
+in the provider's **SQL Editor** (Neon and Supabase both have one), with the
+password you chose:
 
 ```sql
-CREATE ROLE mis_app LOGIN PASSWORD '<the password in DATABASE_APP_URL>';
+CREATE ROLE mis_app LOGIN PASSWORD '<the password you chose>';
 ```
+
+Name the role `mis_app`, not `mis_app.<project-ref>`. The suffix is how the
+pooler routes a connection and is stripped before Postgres sees it; a role
+literally called `mis_app.abcdefghijkl` is a different role that nothing will
+ever authenticate as.
 
 Exactly that, with no attribute clauses. The defaults are all off, which is what
 is wanted, and `NOBYPASSRLS` may only be written by a superuser — so spelling
@@ -167,10 +236,42 @@ direct connection string and will hit connection limits under load.
 
 ## Worth knowing
 
-**Put the functions near the database, and near your field staff.** A cold
-start, ~100 ms of PIN hashing and a cross-region database round trip add up on a
-2G phone. For Indian users that means Mumbai (`bom1`) for both. Region choice
-needs a paid Vercel plan; on Hobby you get one fixed region.
+**Put the functions in the same region as the database.** Not near your field
+staff — near the database. `vercel.json` sets it:
+
+```json
+"regions": ["bom1"]
+```
+
+`bom1` is Mumbai, which matches a Supabase project in `ap-south-1`. Change it if
+your database is elsewhere: `sin1` is Singapore, for `ap-southeast-1`. Both in
+Mumbai is the reason to be on a provider that offers an Indian region at all —
+Neon does not, so the closest it allows is functions and database both in
+Singapore.
+
+**Vercel defaults to Washington DC (`iad1`) and says nothing about it.** With a
+database in India or Singapore that is about 240 ms per round trip, and a
+request makes several: `begin`, the RLS context, the query, `commit`, plus a
+user lookup on its own pool, plus TCP, TLS and authentication on a cold
+instance. Around seventeen round trips for one page — four seconds of pure
+waiting, before Next's cold start or a compute resume. It presents as the whole
+application being slow rather than as a setting, because every click pays it.
+
+The asymmetry is what makes the direction obvious. A request crosses from the
+user to the function *once*, and from the function to the database many times.
+Functions far from the database pay the long hop repeatedly; functions beside it
+pay it once, on the user's connection, where it costs a single hop instead of
+seventeen. Which is why the answer is the database's region and not the field
+staff's — and why, if the field staff are in India, moving the database to
+Mumbai and the functions with it beats either one alone.
+
+Region selection is available on every plan, Hobby included — that was not true
+when this project started, and the old advice to leave it alone is why the
+default went unnoticed.
+
+**An idle compute may be suspended.** Neon's free tier does this after five
+minutes, and the next request waits for the resume. A first click that is
+seconds slower than the rest is this, not the region.
 
 **Publishing a form runs DDL** — `CREATE SCHEMA`, `CREATE VIEW` — so the
 `DATABASE_URL` role needs those rights at runtime, not only at deploy. That is

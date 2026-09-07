@@ -5,6 +5,120 @@ the two whole-tree reviews and the defects they turned up. Everything before
 that is condensed to a line, because the detail has been superseded by the code
 and by [`issues.md`](./issues.md), which records the decisions carried forward.
 
+### 2026-09-07 — Supabase, and four ways a working deployment is silently wrong
+
+Moved from Neon to Supabase for a Mumbai region. It stopped at `DATABASE_URL is
+not set`, with the connection details sitting in the environment under other
+names. Fixing that surfaced three more, none of which announce themselves.
+
+**Provider variable names are resolved in `load-env.mjs`.** Supabase's Vercel
+integration injects `POSTGRES_URL`, `POSTGRES_URL_NON_POOLING` and a
+`POSTGRES_HOST`/`USER`/`PASSWORD`/`DATABASE` set, and no `DATABASE_URL`. They
+are mapped in the one place every entry point already calls, so none of the
+dozen `process.env.DATABASE_URL` reads learns that providers disagree about
+naming. The pooled URL is preferred: Supabase's direct host is IPv6-only without
+the IPv4 add-on and Vercel functions have no IPv6 egress, so the more
+"correct"-looking choice is the one that cannot open a connection at all. The
+loader logs which variable each connection came from, because a connection
+resolved from a name nobody set is otherwise indistinguishable from a configured
+one.
+
+**`DATABASE_APP_URL` can now be derived from `DATABASE_APP_PASSWORD`.** Same
+host, same database, same pooler; only the role and password differ. There is
+deliberately no fallback to the owner's password — that would serve every
+request on the connection that bypasses RLS, and it would look like everything
+working.
+
+**The role name is not always the username.** Supabase's pooler fronts every
+project, so it carries the project reference in the username —
+`mis_app.abcdefghijkl` — and strips it before Postgres sees it. Taken
+literally, `CREATE ROLE` and every `GRANT` in `030-grants.sql` would name a role
+that nothing ever authenticates as: the migration prints "database is up to
+date" and every request then fails on permissions. This is the same defect as
+the literal `mis_app` in the grants file, arriving from the other direction, so
+it is fixed in the same place — `app-role.ts` now derives the role from the URL
+*and* the host. `DATABASE_APP_ROLE` overrides it.
+
+**`pg_trgm` is pre-installed on Supabase, in a schema called `extensions`.** So
+`CREATE EXTENSION IF NOT EXISTS pg_trgm` is a no-op and the operators never
+reach `public`. The owner's search path already covers that schema, so the
+migration applies, the trigram index on `subjects.display_name` builds, and
+nothing looks wrong — until a field worker searches for a person and gets
+`operator does not exist: text % text`. `030-grants.sql` now reads the schema
+out of `pg_extension` rather than assuming a name, grants `USAGE` on it and puts
+it on the app role's `search_path`. Reproduced against a Supabase-shaped local
+database, failing before and passing after.
+
+**The migration lock was being taken on a transaction pooler.**
+`pg_try_advisory_lock` is session-scoped, and a transaction pooler hands the
+next statement to a different backend — so the lock was taken on one, the
+migration ran unprotected, and the unlock returned false against a third. Two
+deployments finishing together would both migrate, which is the single thing
+that script exists to prevent. It now takes the lock on the session connection.
+
+**`unpooledConnection` understands Supabase.** Previously Neon-only, so the
+retry path for role DDL had nothing to fall back to. The target is session mode
+— the same pooler host on port `5432` — and not the direct host, for the IPv6
+reason above: a fallback that cannot be reached is worse than none, because it
+fails in exactly the deployment that needed it.
+
+Migrations also stopped preparing statements. They run once, so there is nothing
+to gain and an intermittent `prepared statement does not exist` to lose.
+
+**`vercel.json` moved to `"regions": ["bom1"]`**, following the database. The
+entry below set it to `sin1` the same day, for a Neon project in Singapore —
+that was the closest available, because Neon has no Indian region. A Supabase
+project in `ap-south-1` makes "both in Mumbai" possible, which is the whole
+reason for the move, and leaving the functions in Singapore would have kept
+the latency the change was meant to remove.
+
+### 2026-09-07 — Six to ten seconds a click, from a region nobody chose
+
+Reported after the first working deployment: every click took 6–10 seconds,
+against an app that is instant locally. Functions on Vercel, database on Neon in
+Singapore.
+
+Vercel places functions in Washington DC (`iad1`) unless told otherwise, and
+`vercel.json` said nothing, so every database round trip crossed the Pacific at
+roughly 240 ms. One page load spends about seventeen of them:
+
+| | round trips |
+|---|---|
+| Owner pool — TCP, TLS, authentication | ~5 |
+| `requireSession()` user lookup | 1 |
+| App-role pool — TCP, TLS, authentication | ~5 |
+| `begin` | 1 |
+| `set_config` × 3, as three separate statements | 3 |
+| The query | 1 |
+| `commit` | 1 |
+
+Four seconds of waiting before Next's cold start or a Neon compute resume, and
+it presents as the product being slow rather than as a setting, because every
+click pays it in full.
+
+**`vercel.json` now sets `"regions": ["sin1"]`**, which is the larger half of
+the fix and a single line: a round trip inside a region is about 2 ms rather
+than 240 ms, so those seventeen stop mattering.
+
+**`withContext` sets the whole RLS context in one statement instead of three.**
+Six statements per query became four. Invisible against Postgres on localhost —
+which is exactly why it was written that way and why it survived — and three
+quarters of a second per query across an ocean. Measured against a real Postgres
+with `log_statement='all'`, before and after, rather than reasoned about.
+
+`docs/deploying.md` carried two claims that are why the default went unnoticed.
+"Region choice needs a paid Vercel plan; on Hobby you get one fixed region" has
+not been true for some time. And "for Indian users that means Mumbai (`bom1`)
+for both" is not reachable — Neon has no Indian region — and pointed the wrong
+way regardless: a request crosses from user to function once and from function
+to database many times, so the function belongs next to the *database*, and the
+user's single longer hop is the cheaper one to pay.
+
+Both fixes are guarded in `connection.test.ts`, and both guards were confirmed
+to fail against the code they replaced. The region one cannot check the value is
+right, only that a decision was made — the default being silent is the whole
+problem.
+
 ### 2026-09-07 — The example auth secret was long enough to work
 
 Setting up the first organisation failed on:

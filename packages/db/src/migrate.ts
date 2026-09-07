@@ -48,7 +48,11 @@ async function main(): Promise<void> {
 
   const appCredentials = parseAppCredentials(process.env.DATABASE_APP_URL);
 
-  const client = postgres(ownerUrl, { max: 1, onnotice: () => {} });
+  // `prepare: false` because a transaction pooler hands each statement to a
+  // different backend and a named statement prepared on one is absent from the
+  // next. Migrations run once, so there is nothing to gain by preparing them
+  // and an intermittent "prepared statement does not exist" to lose.
+  const client = postgres(ownerUrl, { max: 1, prepare: false, onnotice: () => {} });
   const db = drizzle(client);
 
   const sqlDir = join(packageRoot, 'sql');
@@ -56,19 +60,19 @@ async function main(): Promise<void> {
   try {
     // Before the migrations, not after: the schema is declared in terms of
     // types these provide.
-    await applySqlFile(client, sqlDir, PRE_MIGRATION_SQL, appCredentials.username);
+    await applySqlFile(client, sqlDir, PRE_MIGRATION_SQL, appCredentials.role);
 
     console.log('→ applying schema migrations');
     await migrate(db, { migrationsFolder: join(packageRoot, 'migrations') });
 
-    console.log(`→ ensuring application role "${appCredentials.username}"`);
+    console.log(`→ ensuring application role "${appCredentials.role}"`);
     await ensureAppRole(client, ownerUrl, appCredentials);
 
     const files = (await readdir(sqlDir))
       .filter((f) => f.endsWith('.sql') && f !== PRE_MIGRATION_SQL)
       .sort();
     for (const file of files) {
-      await applySqlFile(client, sqlDir, file, appCredentials.username);
+      await applySqlFile(client, sqlDir, file, appCredentials.role);
     }
 
     console.log('✓ database is up to date');
@@ -99,7 +103,13 @@ async function applySqlFile(
 }
 
 interface AppCredentials {
-  username: string;
+  /**
+   * The role Postgres authenticates, which is not always the username in the
+   * URL — see `roleNameFor`. Everything below names roles, never usernames:
+   * CREATE ROLE, every GRANT, and the BYPASSRLS check all have to be about the
+   * role that actually arrives.
+   */
+  role: string;
   password: string;
 }
 
@@ -167,7 +177,7 @@ function parseAppCredentials(url: string | undefined): AppCredentials {
   if (!username || !password) {
     throw new Error('DATABASE_APP_URL must include a username and password');
   }
-  return { username, password };
+  return { role: appRoleName(), password };
 }
 
 /** The four role attributes that decide whether RLS applies to it at all. */
@@ -190,7 +200,7 @@ type RoleDdl = (what: string, statement: (sql: postgres.Sql) => Promise<unknown>
 async function ensureAppRole(
   client: postgres.Sql,
   ownerUrl: string,
-  { username, password }: AppCredentials,
+  { role: username, password }: AppCredentials,
 ): Promise<void> {
   const existing = await roleAttributes(client, username);
 
@@ -210,7 +220,7 @@ async function ensureAppRole(
       if (!direct) throw error;
 
       console.warn(`⚠ ${what} was refused on this connection; retrying without the pooler`);
-      const directClient = postgres(direct, { max: 1, onnotice: () => {} });
+      const directClient = postgres(direct, { max: 1, prepare: false, onnotice: () => {} });
       try {
         await statement(directClient);
       } finally {

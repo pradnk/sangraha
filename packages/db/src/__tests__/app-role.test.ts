@@ -14,11 +14,15 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { appRoleName } from '../app-role';
 
-const saved = process.env.DATABASE_APP_URL;
+const ENV_KEYS = ['DATABASE_APP_URL', 'DATABASE_APP_ROLE'];
+const saved = new Map(ENV_KEYS.map((key) => [key, process.env[key]]));
 
 afterEach(() => {
-  if (saved === undefined) delete process.env.DATABASE_APP_URL;
-  else process.env.DATABASE_APP_URL = saved;
+  for (const key of ENV_KEYS) {
+    const value = saved.get(key);
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
 });
 
 describe('the application role name', () => {
@@ -30,6 +34,37 @@ describe('the application role name', () => {
   it('decodes a username that had to be escaped in the URL', () => {
     process.env.DATABASE_APP_URL = 'postgres://tenant%40host:secret@db.example:5432/mis';
     expect(appRoleName()).toBe('tenant@host');
+  });
+
+  it('strips the project reference Supabase\'s pooler puts in the username', () => {
+    /*
+     * One pooler fronts every project on Supabase, so the project reference
+     * travels in the username and is stripped back off before the connection
+     * reaches Postgres, which authenticates plain `mis_app`.
+     *
+     * Taking the username literally here is silent and total: CREATE ROLE and
+     * every GRANT in 030-grants.sql would name a role called
+     * `mis_app.abcdefghijkl`, the migration would print "database is up to
+     * date", and every request would then arrive as a `mis_app` that either
+     * does not exist or holds nothing.
+     */
+    process.env.DATABASE_APP_URL =
+      'postgres://mis_app.abcdefghijkl:secret@aws-0-ap-south-1.pooler.supabase.com:6543/postgres';
+    expect(appRoleName()).toBe('mis_app');
+  });
+
+  it('leaves a dotted username alone anywhere but that pooler', () => {
+    // A role legitimately called `first.last` must not lose half its name.
+    process.env.DATABASE_APP_URL = 'postgres://first.last:secret@db.example:5432/mis';
+    expect(appRoleName()).toBe('first.last');
+  });
+
+  it('lets DATABASE_APP_ROLE override the derivation entirely', () => {
+    // The escape hatch for a provider that mangles the username some other
+    // way. It names the role Postgres sees, not the string used to connect.
+    process.env.DATABASE_APP_URL = 'postgres://whatever.the.provider.wants:s@odd.example/mis';
+    process.env.DATABASE_APP_ROLE = 'sangraha_web';
+    expect(appRoleName()).toBe('sangraha_web');
   });
 
   it('falls back to the development default rather than throwing', () => {
