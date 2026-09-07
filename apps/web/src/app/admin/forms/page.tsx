@@ -38,6 +38,7 @@ export default async function AdminFormsPage() {
               <tr>
                 <th className="px-4 py-2.5 font-medium">Form</th>
                 <th className="px-4 py-2.5 font-medium">Type</th>
+                <th className="px-4 py-2.5 font-medium">Who can use it</th>
                 <th className="px-4 py-2.5 font-medium">Published</th>
                 <th className="px-4 py-2.5 text-right font-medium">Responses</th>
               </tr>
@@ -66,6 +67,15 @@ export default async function AdminFormsPage() {
                         No one chosen — registers nobody
                       </span>
                     ) : null}
+                  </td>
+                  {/* Who may use it, so an admin can see at a glance which
+                      forms have been narrowed without opening each one. */}
+                  <td className="px-4 py-3 text-slate-600">
+                    {form.audience === 'everyone'
+                      ? 'Everyone'
+                      : form.audience === 'supervisors'
+                        ? `Supervisors${form.namedCount ? ` + ${form.namedCount}` : ''}`
+                        : `Admins${form.namedCount ? ` + ${form.namedCount}` : ''}`}
                   </td>
                   <td className="px-4 py-3">
                     {form.publishedVersion ? (

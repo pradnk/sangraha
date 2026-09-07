@@ -3,6 +3,25 @@ import { signupAvailability } from '@/lib/signup';
 import { SangrahaLogo } from '@/components/brand/sangraha-mark';
 import { StartForm } from './start-form';
 
+/*
+ * Never prerendered.
+ *
+ * This page asks the database a question whose answer changes the moment the
+ * page is used: does an organisation exist yet? Every other page is dynamic by
+ * accident — it reads `cookies()` for the session, or awaits `searchParams` —
+ * but this one needs neither, so Next statically prerenders it at build time
+ * and freezes the answer into HTML.
+ *
+ * Two ways that hurt. The build acquires a database dependency it should not
+ * have: no Postgres reachable means `ECONNREFUSED` and a failed build, which is
+ * what a preview deployment without `DATABASE_URL` looks like. And on a real
+ * deployment the bootstrap door appears not to shut — the first administrator
+ * signs up, and `/start` goes on serving the cached "Set up your organisation"
+ * form to everyone after them. The signup action re-checks availability, so
+ * nobody actually gets in; they just get an invitation the system then refuses.
+ */
+export const dynamic = 'force-dynamic';
+
 /**
  * Creating an organisation.
  *

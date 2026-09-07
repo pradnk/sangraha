@@ -4,12 +4,14 @@ import {
   countAnswersForKey,
   countUnregisteredSubmissions,
   getEditableVersion,
+  getFormAudience,
   getFormBySlug,
   listPurposes,
   listSubjectTypes,
+  listUsers,
   loadFormVersionById,
-  optionSets,
   options,
+  optionSets,
   organisations,
 } from '@sangraha/db';
 import { requireRole, withSession } from '@/lib/auth/guard';
@@ -96,6 +98,25 @@ export default async function FormBuilderPage({
           ? await countUnregisteredSubmissions(tx, session.orgId, form.id)
           : 0,
       extraLocales: (org?.locales ?? ['en']).filter((l) => l !== 'en'),
+      audience: await getFormAudience(tx, form.id),
+      /*
+       * Only the people an audience can actually be narrowed to. Admins are
+       * left out because they always have access — offering them would imply a
+       * choice that does not exist. Inactive accounts are left out because
+       * naming somebody who cannot sign in reads as access that is not there.
+       */
+      candidates: (await listUsers(tx, session.orgId))
+        .filter(
+          (person) =>
+            person.isActive &&
+            (person.role === 'field_worker' || person.role === 'supervisor'),
+        )
+        .map((person) => ({
+          id: person.id,
+          fullName: person.fullName,
+          username: person.username,
+          role: person.role as 'field_worker' | 'supervisor',
+        })),
       publishState,
       versionNumber: editable?.versionNumber ?? null,
       answerCounts,
@@ -121,6 +142,9 @@ export default async function FormBuilderPage({
       subjectTypeId={loaded.form.subjectTypeId}
       subjectTypes={loaded.subjectTypes}
       unregisteredCount={loaded.unregisteredCount}
+      audience={loaded.audience.audience}
+      audienceUserIds={loaded.audience.userIds}
+      audienceCandidates={loaded.candidates}
       version={loaded.version}
       publishState={loaded.publishState}
       versionNumber={loaded.versionNumber}

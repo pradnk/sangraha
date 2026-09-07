@@ -48,6 +48,16 @@ export interface QueuedSubmission {
    * treated on failure — see `send` and `markFailed`.
    */
   consent?: Record<string, unknown>[];
+  /**
+   * The record this entry rewrites, when a supervisor sent one back.
+   *
+   * A correction rides the queue exactly as a first send does — a worker fixing
+   * an answer is on the same bad connection as one capturing a visit. The
+   * server reads this and updates in place instead of inserting, so the entry
+   * needs no other special handling here: `send` spreads the whole entry into
+   * the request body.
+   */
+  correctsSubmissionId?: string;
   queuedAt: number;
   attempts: number;
   lastError?: string;

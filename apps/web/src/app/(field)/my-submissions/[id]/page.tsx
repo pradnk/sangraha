@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { ArrowLeft } from 'lucide-react';
+import { ArrowLeft, Pencil } from 'lucide-react';
 import { getSubmission, loadFormVersionById } from '@sangraha/db';
 import { formatAnswers } from '@sangraha/form-engine';
 import { requireSession, withSession } from '@/lib/auth/guard';
@@ -71,13 +71,36 @@ export default async function SubmissionDetailPage({
         </p>
       </div>
 
-      {/* A rejection is only actionable if the reason travels with it. */}
-      {submission.status === 'rejected' && submission.reviewNote ? (
-        <div className="rounded-field bg-deny-50 p-4">
-          <p className="mb-1 text-field-sm font-semibold text-deny-700">
-            {m(session.locale, 'reviewNote')}
-          </p>
-          <p className="text-field-base text-deny-700">{submission.reviewNote}</p>
+      {/*
+        * A rejection is only actionable if the reason travels with it — and
+        * only if there is something to press. The note shipped without the
+        * button, which made this screen a dead end: the worker was told what
+        * was wrong and left to capture the whole visit again from the home
+        * screen, producing a second record while the first stayed rejected.
+        *
+        * The note is shown whenever the record was sent back, including when a
+        * supervisor left none. "Sent back, no reason given" is a worse answer
+        * than a missing panel only if the panel implies there was a reason; the
+        * button is what the worker needs either way.
+        */}
+      {submission.status === 'rejected' ? (
+        <div className="flex flex-col gap-3">
+          {submission.reviewNote ? (
+            <div className="rounded-field bg-deny-50 p-4">
+              <p className="mb-1 text-field-sm font-semibold text-deny-700">
+                {m(session.locale, 'reviewNote')}
+              </p>
+              <p className="text-field-base text-deny-700">{submission.reviewNote}</p>
+            </div>
+          ) : null}
+
+          <Link
+            href={`/my-submissions/${submission.id}/correct`}
+            className="inline-flex min-h-tap items-center justify-center gap-2 rounded-field bg-brand-600 px-5 text-field-base font-semibold text-white"
+          >
+            <Pencil aria-hidden className="h-5 w-5" />
+            {m(session.locale, 'fixAndResend')}
+          </Link>
         </div>
       ) : null}
 

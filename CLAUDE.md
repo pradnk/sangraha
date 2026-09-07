@@ -1,15 +1,22 @@
 # Working in Sangraha
 
 Sangraha (संग्रह, "collection") — configurable data collection for the social
-sector. Read `README.md` first — it is the operational
-reference (logins, ports, commands, what is and is not built). This file covers
-the conventions that are easy to violate by accident.
+sector. Read `README.md` first — it is the operational reference (logins, ports,
+commands, what is and is not built) and indexes the long guides in `docs/`.
+`CONTRIBUTING.md` carries these same conventions for human contributors; this
+file is the version agentic tools read, and the two must not drift apart.
 
 **Update `README.md` in the same change.** It is what everyone else reads to run
 the project, so anything that alters logins, ports, commands, environment
-variables, or the built/not-built status in §1 belongs there immediately, plus a
-line in the Changelog. A README that has drifted is worse than none: someone
-will follow it and lose an hour.
+variables, or the built/not-built status belongs there immediately — or in the
+`docs/` page that owns it — plus an entry in `CHANGELOG.md`. A README that has
+drifted is worse than none: someone will follow it and lose an hour.
+
+**Do not quote a test count anywhere.** Three different ones (545, 551, 382) were
+in the README at once. A number nobody re-runs is a number that drifts.
+
+**The project is AGPL-3.0-only** (`LICENSE`). Every `package.json` declares it.
+Do not add a dependency under a licence incompatible with that.
 
 ## Commands
 
@@ -102,10 +109,17 @@ header shows their logo or their name via `OrgBrand`, in the leading position on
 the left. A worker should feel they are using their organisation's system.
 
 Sangraha co-brands quietly beside it: `SangrahaCoBrand` sits centred in the
-header, small and in grey, and is not a link. That is the only place the mark
-appears inside a live organisation — the full `SangrahaLogo` still belongs only
-to signup, sign-in and anywhere no organisation is resolvable. If a change would
+header, at 18px, and is not a link. That is the only place the mark appears
+inside a live organisation — the full `SangrahaLogo` still belongs only to
+signup, sign-in and anywhere no organisation is resolvable. If a change would
 make our mark larger, louder or earlier than the NGO's, it is the wrong change.
+
+**Quiet is size and position, never contrast.** The co-brand was `slate-400` on
+white — 2.56:1, under even the 3:1 floor for a UI element — and read as absent
+rather than understated. It is now `brand-600` and `slate-600` at the same 18px.
+Anything a user must read meets 4.5:1; `palette.test.ts` pins the two co-brand
+colours. When the answer to "it is not visible" looks like making our mark
+bigger, it is contrast that wants fixing.
 
 **Shrink uploads in the browser, do not just reject them.** Next.js rejects an
 oversized server-action body before your handler runs, so the framework error is

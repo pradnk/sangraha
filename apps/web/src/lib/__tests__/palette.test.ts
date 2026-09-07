@@ -101,3 +101,60 @@ describe('the custom colour palette', () => {
     }
   });
 });
+
+/**
+ * The co-brand has to be readable, not merely present.
+ *
+ * `SangrahaCoBrand` shipped as `text-slate-400` on a white header: 2.56:1,
+ * which is below the 4.5:1 WCAG AA asks of text and below even the 3:1 floor
+ * for a UI element. It was reported as "not very visible", and it was not a
+ * matter of taste — on a sunlit phone it was gone.
+ *
+ * The failure mode is the same one this file already guards against, one step
+ * further on: the class is valid, the shade exists, the CSS is emitted, and the
+ * result is still unreadable. Only a number catches that.
+ *
+ * Pinned to the two colours the component actually names, so that darkening it
+ * back into invisibility fails here rather than in the field.
+ */
+describe('co-brand contrast', () => {
+  /** WCAG relative luminance. */
+  function luminance(hex: string): number {
+    const channels = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255);
+    const linear = channels.map((c) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4));
+    return 0.2126 * linear[0]! + 0.7152 * linear[1]! + 0.0722 * linear[2]!;
+  }
+
+  function contrast(a: string, b: string): number {
+    const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+    return (hi! + 0.05) / (lo! + 0.05);
+  }
+
+  // Tailwind's own slate scale; the config extends `brand` but not `slate`.
+  const SLATE_600 = '#475569';
+  const WHITE = '#ffffff';
+
+  it('is a sanity check that agrees with the known failure', () => {
+    // The shade the component used to carry, kept as the reason the rest exists.
+    expect(contrast('#94a3b8', WHITE)).toBeLessThan(3);
+  });
+
+  it('sets the wordmark dark enough to read on a white header', () => {
+    expect(contrast(SLATE_600, WHITE)).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it('sets the mark dark enough to read on a white header', () => {
+    const brand = (config.theme?.extend?.colors as Record<string, Record<string, string>>).brand!;
+    expect(contrast(brand['600']!, WHITE)).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it('still uses those two colours', () => {
+    const component = readFileSync(
+      join(import.meta.dirname, '..', '..', 'components', 'brand', 'sangraha-mark.tsx'),
+      'utf8',
+    );
+    const coBrand = component.slice(component.indexOf('export function SangrahaCoBrand'));
+    expect(coBrand, 'the mark should carry the product accent').toContain('text-brand-600');
+    expect(coBrand, 'the wordmark should be slate-600 or darker').toContain('text-slate-600');
+  });
+});

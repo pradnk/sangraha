@@ -17,6 +17,33 @@ export const userRoleEnum = pgEnum('user_role', [
   'super_admin',
 ]);
 
+/**
+ * Who may use a form.
+ *
+ * Each value names the **lowest role included automatically**; the two
+ * restricted tiers then take individually named people on top, held in
+ * `form_access`.
+ *
+ * Composed this way so that a form nobody can approve cannot be expressed. An
+ * earlier version offered "all field workers" and "all supervisors" as flat
+ * audiences, which meant an admin could compose one with no reviewer in it —
+ * and the screen had to carry a paragraph explaining where the records would go
+ * instead. Building the approver into the option removes both the explanation
+ * and the state it described.
+ *
+ * `everyone` is the default, including for every form that existed before this
+ * column did: narrowing is opt-in, so adding the feature changed nobody's
+ * access.
+ */
+export const formAudienceEnum = pgEnum('form_audience', [
+  /** Every signed-in user. Supervisors approve, within their own locations. */
+  'everyone',
+  /** Every supervisor, plus the field workers named on the form. */
+  'supervisors',
+  /** Org admins only, plus the people named. No supervisor sees these records. */
+  'admins',
+]);
+
 export const formTypeEnum = pgEnum('form_type', [
   /** Creates or updates a subject in the registry. */
   'registration',

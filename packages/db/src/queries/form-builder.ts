@@ -8,8 +8,9 @@ import {
   toSnakeCase,
 } from '@sangraha/form-engine';
 import type { DbLike } from '../client';
-import { formFields, formVersions, forms, subjectTypes } from '../schema/config';
+import { formAccess, formFields, formVersions, forms, subjectTypes } from '../schema/config';
 import { subjects, submissions } from '../schema/data';
+import { users } from '../schema/tenancy';
 import { countExistingDuplicates } from './submissions';
 
 /**
@@ -38,6 +39,10 @@ export interface AdminFormSummary {
    * Surfaced in the list so it is visible without opening every form.
    */
   missingSubjectType: boolean;
+  /** Who may use it, so the setting is visible without opening every form. */
+  audience: 'everyone' | 'supervisors' | 'admins';
+  /** How many people are named, when the audience is `named`. */
+  namedCount: number;
 }
 
 /**
@@ -72,7 +77,15 @@ export async function listFormsForAdmin(db: DbLike, orgId: string): Promise<Admi
     .from(forms)
     .leftJoin(formVersions, eq(formVersions.formId, forms.id))
     .where(eq(forms.orgId, orgId))
-    .groupBy(forms.id, forms.slug, forms.name, forms.formType, forms.isActive, forms.subjectTypeId)
+    .groupBy(
+      forms.id,
+      forms.slug,
+      forms.name,
+      forms.formType,
+      forms.isActive,
+      forms.subjectTypeId,
+      forms.audience,
+    )
     .orderBy(asc(forms.slug));
 
   const counts = await db
@@ -84,10 +97,23 @@ export async function listFormsForAdmin(db: DbLike, orgId: string): Promise<Admi
 
   const countByForm = new Map(counts.map((row) => [row.formId, Number(row.total)]));
 
+  // A third query rather than a join, for the reason the count above is
+  // separate: joining a second one-to-many would multiply the rows and inflate
+  // whichever total was counted second.
+  const named = await db
+    .select({ formId: formAccess.formId, total: count() })
+    .from(formAccess)
+    .innerJoin(forms, eq(forms.id, formAccess.formId))
+    .where(eq(forms.orgId, orgId))
+    .groupBy(formAccess.formId);
+
+  const namedByForm = new Map(named.map((row) => [row.formId, Number(row.total)]));
+
   return rows.map(({ subjectTypeId, ...row }) => ({
     ...row,
     publishedVersion: row.publishedVersion === null ? null : Number(row.publishedVersion),
     submissionCount: countByForm.get(row.id) ?? 0,
+    namedCount: namedByForm.get(row.id) ?? 0,
     missingSubjectType: row.formType !== 'standalone' && !subjectTypeId,
   })) as AdminFormSummary[];
 }
@@ -644,7 +670,11 @@ export async function validateDraft(db: DbLike, versionId: string): Promise<Publ
    * see it.
    */
   const [owner] = await db
-    .select({ formType: forms.formType, subjectTypeId: forms.subjectTypeId })
+    .select({
+      formType: forms.formType,
+      subjectTypeId: forms.subjectTypeId,
+      audience: forms.audience,
+    })
     .from(formVersions)
     .innerJoin(forms, eq(forms.id, formVersions.formId))
     .where(eq(formVersions.id, versionId))

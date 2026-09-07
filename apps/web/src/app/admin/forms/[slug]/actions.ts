@@ -16,6 +16,7 @@ import {
   regenerateFormViews,
   reorderFields,
   resolveFieldInVersion,
+  setFormAudience,
   setFormSubjectType,
   updateField,
   getOwnerDb,
@@ -327,6 +328,56 @@ export async function setSubjectTypeAction(
 
   revalidatePath(`/admin/forms/${slug}`);
   revalidatePath('/admin/forms');
+  return {};
+}
+
+/**
+ * Sets who may use the form.
+ *
+ * A form setting, not a draft one — the same reasoning as `setSubjectTypeAction`
+ * above. An admin narrowing a form because the wrong team has been filling it in
+ * wants that true now, not after they remember to press Publish.
+ *
+ * The ids are validated for shape here and re-resolved against the organisation
+ * inside `setFormAudience`. Shape is all this layer can honestly check; whether
+ * a uuid names one of *your* people is a question only the database can answer.
+ */
+export async function setFormAudienceAction(
+  slug: string,
+  audience: string,
+  userIds: string[],
+): Promise<{ error?: string }> {
+  const session = await requireRole(['org_admin', 'super_admin']);
+
+  const parsed = z
+    .object({
+      audience: z.enum(['everyone', 'supervisors', 'admins']),
+      userIds: z.array(z.string().uuid()).max(500),
+    })
+    .safeParse({ audience, userIds });
+
+  if (!parsed.success) return { error: 'That is not a valid choice.' };
+
+  const result = await withSession(session, async (tx) => {
+    const form = await getFormBySlug(tx, session.orgId, slug);
+    if (!form) return { ok: false as const, reason: 'That form could not be found.' };
+    return setFormAudience(tx, {
+      formId: form.id,
+      orgId: session.orgId,
+      audience: parsed.data.audience,
+      userIds: parsed.data.userIds,
+    });
+  });
+
+  if (!result.ok) return { error: 'That form could not be found.' };
+
+  revalidatePath(`/admin/forms/${slug}`);
+  revalidatePath('/admin/forms');
+  // The worker's home screen is built from the same predicate, and so is the
+  // review queue — narrowing a form changes which records a supervisor may
+  // approve, not only which forms they may fill in.
+  revalidatePath('/');
+  revalidatePath('/review');
   return {};
 }
 

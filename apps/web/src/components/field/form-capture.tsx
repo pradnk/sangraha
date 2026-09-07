@@ -73,6 +73,15 @@ export interface FormCaptureProps {
    * relying on it to tell them what a field worker will actually see.
    */
   preview?: boolean;
+  /**
+   * The record being rewritten, when a supervisor sent one back.
+   *
+   * Its answers seed the form, so the worker fixes the one thing that was
+   * wrong instead of re-keying a visit they already made. Re-entering
+   * everything is not merely tedious — it is how a correction introduces a
+   * second mistake in an answer that was right the first time.
+   */
+  correction?: { submissionId: string; answers: SubmissionData } | null;
 }
 
 /**
@@ -98,8 +107,19 @@ export function FormCapture({
   checkDuplicates = false,
   consent = null,
   preview = false,
+  correction = null,
 }: FormCaptureProps) {
-  const draftKey = `mis.draft.${version.id}${subjectId ? `.${subjectId}` : ''}`;
+  /*
+   * A correction gets its own draft key.
+   *
+   * Sharing one with a fresh capture of the same form would let a half-finished
+   * new visit reappear inside a correction, and the corrected answers reappear
+   * in the next new visit. Keyed on the record being fixed, because that is
+   * what the draft is about.
+   */
+  const draftKey = correction
+    ? `mis.correction.${correction.submissionId}`
+    : `mis.draft.${version.id}${subjectId ? `.${subjectId}` : ''}`;
 
   const [data, setData] = useState<SubmissionData>({});
   const [index, setIndex] = useState(0);
@@ -142,11 +162,16 @@ export function FormCapture({
     try {
       const raw = window.localStorage.getItem(draftKey);
       if (raw) setData(JSON.parse(raw) as SubmissionData);
+      // No draft in hand: a correction starts from what was actually sent, a
+      // new capture from nothing.
+      else if (correction) setData(correction.answers);
     } catch {
-      // A corrupt draft just starts fresh.
+      // A corrupt draft starts from the stored answers where there are some,
+      // rather than losing them along with the draft.
+      if (correction) setData(correction.answers);
     }
     setRestored(true);
-  }, [draftKey, preview]);
+  }, [draftKey, preview, correction]);
 
   // Autosave on every change, not on a timer — a timer loses the last few
   // seconds, which is exactly when a form is most likely to be interrupted.
@@ -336,6 +361,9 @@ export function FormCapture({
         subjectId: attachTo,
         locationId,
         data: answers,
+        // Turns this send into a rewrite of an existing record rather than a
+        // new one. Absent on a first capture, which is every other caller.
+        correctsSubmissionId: correction?.submissionId,
         deviceMeta: { userAgent: navigator.userAgent, online: navigator.onLine },
         // Travels with the record because at registration the subject does not
         // exist until the server creates it, inside the same transaction.
@@ -365,7 +393,7 @@ export function FormCapture({
       window.localStorage.removeItem(draftKey);
       setState('done');
     },
-    [consentEvents, draftKey, locale, locationId, questions, version.id],
+    [consentEvents, draftKey, locale, locationId, questions, version.id, correction],
   );
 
   const save = async () => {

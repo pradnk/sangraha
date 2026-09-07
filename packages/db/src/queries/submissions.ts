@@ -302,6 +302,101 @@ export async function reviewSubmission(
   return { ok: true, selfReviewed: updated.submittedBy === input.reviewerId };
 }
 
+/** Why a correction could not be applied. */
+export type CorrectionFailure =
+  /** No such record, or not this worker's. RLS hid it. */
+  | 'not_found'
+  /** Not sent back for correction — already approved, or still waiting. */
+  | 'not_rejected';
+
+export type CorrectionResult = { ok: true } | { ok: false; reason: CorrectionFailure };
+
+/**
+ * Applies a worker's correction to a record a supervisor sent back.
+ *
+ * The record moves back to `submitted` and re-enters the review queue, rather
+ * than becoming a second record. A rejection is not a rejection *of the visit* —
+ * the visit happened. It is a rejection of what was written down about it, and
+ * the thing being fixed is that description. Two rows would mean the same
+ * encounter counted twice in analytics, and for a registration form, a second
+ * person in the registry.
+ *
+ * The review fields are cleared on the way through. Leaving the old note
+ * attached would show the next supervisor a complaint about answers that are no
+ * longer there, and leaving `reviewed_by` set would make an untouched record
+ * look already-judged. The note is not lost: it is on the `status_changed`
+ * revision that recorded the rejection, which is where an audit reads it from.
+ *
+ * **`status = 'rejected'` is the whole concurrency story.** It makes a replay
+ * from the retry queue a no-op rather than a second application, which matters
+ * because that queue re-sends whenever a response is lost on the way back. It
+ * holds because `reviewSubmission` only ever acts on a `submitted` record, so
+ * nothing else can move a row *into* `rejected` behind this statement's back —
+ * the only way back to `rejected` is a supervisor reviewing the correction this
+ * function just made.
+ *
+ * Ownership is not checked here. `submissions_isolation` narrows a field worker
+ * to `submitted_by = app.current_user_id()`, so another worker's record is not
+ * visible to this UPDATE at all and resolves as `not_found`. Re-checking it in
+ * TypeScript would be a second implementation of the rule, free to disagree
+ * with the first.
+ */
+export async function correctSubmission(
+  db: DbLike,
+  input: {
+    submissionId: string;
+    /** Whose correction this is, for the audit trail. */
+    correctedBy: string;
+    data: SubmissionData;
+  },
+): Promise<CorrectionResult> {
+  const now = new Date();
+
+  const [updated] = await db
+    .update(submissions)
+    .set({
+      data: input.data,
+      status: 'submitted',
+      submittedAt: now,
+      reviewedBy: null,
+      reviewedAt: null,
+      reviewNote: null,
+      updatedAt: now,
+    })
+    .where(and(eq(submissions.id, input.submissionId), eq(submissions.status, 'rejected')))
+    .returning({ id: submissions.id, data: submissions.data });
+
+  if (!updated) {
+    // Which of the two it was, so the screen can say something true. Read only
+    // on the failure path — the UPDATE above is what enforces the rule.
+    const [row] = await db
+      .select({ status: submissions.status })
+      .from(submissions)
+      .where(eq(submissions.id, input.submissionId))
+      .limit(1);
+
+    return { ok: false, reason: row ? 'not_rejected' : 'not_found' };
+  }
+
+  const [last] = await db
+    .select({ revisionNo: submissionRevisions.revisionNo })
+    .from(submissionRevisions)
+    .where(eq(submissionRevisions.submissionId, input.submissionId))
+    .orderBy(desc(submissionRevisions.revisionNo))
+    .limit(1);
+
+  await db.insert(submissionRevisions).values({
+    submissionId: input.submissionId,
+    revisionNo: (last?.revisionNo ?? 0) + 1,
+    changeType: 'updated',
+    data: updated.data,
+    status: 'submitted',
+    changedBy: input.correctedBy,
+  });
+
+  return { ok: true };
+}
+
 /**
  * Approves several records at once.
  *

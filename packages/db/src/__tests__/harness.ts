@@ -14,6 +14,7 @@ import { deleteOrganisation } from '../admin/delete-organisation';
 import { createPostgresClient, type Database } from '../client';
 import { hashPin } from '../auth/pin';
 import {
+  formAccess,
   formFields,
   formVersions,
   forms,
@@ -202,6 +203,10 @@ export interface PublishFormOptions {
   displayNameFields?: string[];
   /** Which answers must match exactly for a duplicate check. */
   matchFields?: string[];
+  /** Who may use the form. Defaults to `everyone`, as a real form does. */
+  audience?: 'everyone' | 'supervisors' | 'admins';
+  /** People named on top of the tier, for either restricted audience. */
+  accessUserIds?: string[];
 }
 
 /** Creates and publishes a form version. Returns the form and version ids. */
@@ -246,10 +251,20 @@ export async function publishForm(
         slug,
         name: { en: slug },
         formType: opts.formType ?? 'encounter',
+        audience: opts.audience ?? 'everyone',
         subjectTypeId,
       })
       .returning({ id: forms.id });
     formId = form!.id;
+  }
+
+  // On the owner connection, so a fixture can name anyone without needing an
+  // admin context. The policy that governs real writes is exercised separately.
+  if (opts.accessUserIds?.length) {
+    await db
+      .insert(formAccess)
+      .values(opts.accessUserIds.map((userId) => ({ formId: formId!, userId })))
+      .onConflictDoNothing();
   }
 
   const [version] = await db

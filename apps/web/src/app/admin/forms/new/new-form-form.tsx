@@ -139,6 +139,18 @@ export function NewFormForm({
         </label>
       ) : null}
 
+      {/* Said here rather than asked here. This screen deliberately asks only a
+          couple of questions, and who may use a form is easier to decide once
+          you can see it — but "everyone, until you say otherwise" is not a
+          default anybody should discover afterwards. */}
+      <p className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
+        <strong className="font-medium">Everyone in your organisation will be able to use this
+        form.</strong>{' '}
+        On the next screen, under <em>Who can use this form?</em>, you can narrow it to supervisors
+        plus the field workers you choose, or to organisation admins plus the people you choose —
+        useful for something sensitive, because supervisors do not see those records at all.
+      </p>
+
       <button
         type="submit"
         disabled={pending || (needsSubjectType && subjectTypes.length === 0)}

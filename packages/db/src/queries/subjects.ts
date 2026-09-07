@@ -13,6 +13,7 @@ import { composeDisplayName } from './subject-types';
  * every later event off them — which is the only way to answer "how did this
  * child progress over the year?" rather than "how many forms were filled in".
  */
+import { usableForm } from './form-access';
 
 export interface SubjectSummary {
   id: string;
@@ -584,6 +585,8 @@ export async function listEncounterForms(
         eq(forms.subjectTypeId, subjectTypeId),
         eq(forms.formType, 'encounter'),
         eq(forms.isActive, true),
+        // "Add another visit" must offer only the visits this worker may record.
+        usableForm(),
       ),
     )
     .orderBy(asc(forms.slug));

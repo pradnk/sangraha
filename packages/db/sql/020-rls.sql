@@ -70,6 +70,59 @@ CREATE OR REPLACE FUNCTION app.can_see_location(loc uuid) RETURNS boolean
     );
 
 /*
+ * True when the current actor may use `form`.
+ *
+ * Three audiences, each named after the lowest role it includes automatically,
+ * and each carrying an approver by construction:
+ *
+ *   everyone     every signed-in user; supervisors approve
+ *   supervisors  every supervisor, plus the field workers named on the form
+ *   admins       admins only, plus the people named
+ *
+ * Org admins first and unconditionally. They have to be able to edit and approve
+ * a form they are not themselves an audience of, and their presence in every
+ * option is what guarantees a record can always be reviewed by somebody.
+ *
+ * SECURITY DEFINER for the same reason `can_see_location` is: it reads `forms`
+ * and `form_access`, both of which are under RLS, and `submissions_isolation`
+ * calls it — without the definer's rights the policy would recurse. The
+ * search_path is pinned so those rights cannot be redirected to an
+ * attacker-controlled schema.
+ *
+ * The org check inside the EXISTS is not redundant with the caller's policy.
+ * This runs as the definer, so no policy is filtering the read — the tenant
+ * boundary has to be re-imposed here explicitly, exactly as
+ * `duplicate_answer_exists` does below.
+ *
+ * `app.actor_role()` defaults to 'field_worker' when the context is unset, so
+ * an unscoped connection fails closed rather than open.
+ */
+CREATE OR REPLACE FUNCTION app.can_use_form(form uuid) RETURNS boolean
+  LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp
+  RETURN
+    app.actor_role() IN ('org_admin', 'super_admin')
+    OR EXISTS (
+      SELECT 1
+      FROM forms f
+      WHERE f.id = form
+        AND f.org_id = app.current_org_id()
+        AND (
+          f.audience = 'everyone'
+          -- Every supervisor is in the `supervisors` tier automatically, which
+          -- is what makes that option's approval loop immune to staffing
+          -- changes: a supervisor who joins next month is already in it.
+          OR (f.audience = 'supervisors' AND app.actor_role() = 'supervisor')
+          -- Named additions, for both restricted tiers. `admins` has no role
+          -- clause of its own because the admin short-circuit above already
+          -- covers it — the only other way in is by name.
+          OR EXISTS (
+            SELECT 1 FROM form_access fa
+            WHERE fa.form_id = f.id AND fa.user_id = app.current_user_id()
+          )
+        )
+    );
+
+/*
  * Whether this organisation already holds this answer on this form.
  *
  * SECURITY DEFINER for the same reason `can_see_location` is, but the problem
@@ -169,6 +222,23 @@ CREATE POLICY form_versions_isolation ON form_versions
   USING (EXISTS (SELECT 1 FROM forms f WHERE f.id = form_id AND f.org_id = app.current_org_id()))
   WITH CHECK (EXISTS (SELECT 1 FROM forms f WHERE f.id = form_id AND f.org_id = app.current_org_id()));
 
+/*
+ * Who is named on a form.
+ *
+ * Readable across the tenant, because a worker's own screens ask "may I use
+ * this?" through `can_use_form`, and an admin screen lists the current
+ * selection. Writable by admins only — the WITH CHECK is what stops a worker
+ * adding themselves to a form they were left off.
+ */
+ALTER TABLE form_access ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS form_access_isolation ON form_access;
+CREATE POLICY form_access_isolation ON form_access
+  USING (EXISTS (SELECT 1 FROM forms f WHERE f.id = form_id AND f.org_id = app.current_org_id()))
+  WITH CHECK (
+    EXISTS (SELECT 1 FROM forms f WHERE f.id = form_id AND f.org_id = app.current_org_id())
+    AND app.actor_role() IN ('org_admin', 'super_admin')
+  );
+
 ALTER TABLE form_fields ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS form_fields_isolation ON form_fields;
 CREATE POLICY form_fields_isolation ON form_fields
@@ -227,12 +297,18 @@ CREATE POLICY subject_relations_isolation ON subject_relations
  *
  *   field_worker  own submissions only — they correct their own mistakes, not
  *                 a colleague's.
- *   supervisor    everything in their assigned locations, which is what the
- *                 review queue is for.
+ *   supervisor    their assigned locations, narrowed to the forms they are an
+ *                 audience of, which is what the review queue is for.
  *   org_admin     the whole organisation.
  *
  * The WITH CHECK clause additionally stops a field worker from writing a
  * submission attributed to someone else.
+ *
+ * **Why the form audience is here and not on `forms`.** Restricting reads of
+ * `forms` would have been the obvious place and is the wrong one: the queue and
+ * the timeline join that table only to resolve a form's *name*, so a worker
+ * looking at their own past record would see it go blank. Access decides what
+ * you may start and review, not what you may remember.
  */
 ALTER TABLE submissions ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS submissions_isolation ON submissions;
@@ -241,6 +317,12 @@ CREATE POLICY submissions_isolation ON submissions
     org_id = app.current_org_id()
     AND CASE
       WHEN app.actor_role() = 'field_worker' THEN submitted_by = app.current_user_id()
+      WHEN app.actor_role() = 'supervisor' THEN
+        -- A supervisor captures data too, and keeps sight of their own records
+        -- whatever a form's audience says. Losing your own history because
+        -- somebody re-scoped a form would be a bug wearing a policy's clothes.
+        submitted_by = app.current_user_id()
+        OR (app.can_see_location(location_id) AND app.can_use_form(form_id))
       ELSE app.can_see_location(location_id)
     END
   )
@@ -248,9 +330,31 @@ CREATE POLICY submissions_isolation ON submissions
     org_id = app.current_org_id()
     AND CASE
       WHEN app.actor_role() = 'field_worker' THEN submitted_by = app.current_user_id()
+      WHEN app.actor_role() = 'supervisor' THEN
+        submitted_by = app.current_user_id()
+        OR (app.can_see_location(location_id) AND app.can_use_form(form_id))
       ELSE app.can_see_location(location_id)
     END
   );
+
+/*
+ * A form's audience gates *new* records, and only new ones.
+ *
+ * RESTRICTIVE and `FOR INSERT`, which together are the whole point. RESTRICTIVE
+ * because this must AND with `submissions_isolation` rather than offer a second
+ * way in; INSERT-only because an UPDATE is a correction of a record that already
+ * exists, and a worker who has been moved off a form must still be able to
+ * finish one a supervisor sent back. Access governs what you may start, not what
+ * you must finish — a rejected record nobody may touch is stuck for ever.
+ *
+ * This is the check that actually holds. `POST /api/submissions` takes a
+ * `formVersionId` straight from the client, so gating the screens would leave
+ * the door open to anyone willing to type a uuid.
+ */
+DROP POLICY IF EXISTS submissions_form_audience ON submissions;
+CREATE POLICY submissions_form_audience ON submissions
+  AS RESTRICTIVE FOR INSERT
+  WITH CHECK (app.can_use_form(form_id));
 
 -- Inherits the submission's visibility: the EXISTS is itself filtered by the
 -- policy above, so an actor sees exactly the history of the rows they can see.

@@ -1,6 +1,7 @@
 {
   "name": "sangraha",
   "private": true,
+  "license": "AGPL-3.0-only",
   "version": "0.1.0",
   "description": "Sangraha \u2014 configurable data collection for the social sector",
   "workspaces": [

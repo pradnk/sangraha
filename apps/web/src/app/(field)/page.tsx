@@ -1,7 +1,10 @@
 import Link from 'next/link';
 import { CalendarPlus, ClipboardList, FileText } from 'lucide-react';
 import { and, asc, eq } from 'drizzle-orm';
-import { forms } from '@sangraha/db';
+import {
+  forms,
+  usableForm,
+} from '@sangraha/db';
 import { requireSession, withSession } from '@/lib/auth/guard';
 import { t } from '@/lib/i18n';
 import { m } from '@/lib/messages';
@@ -27,7 +30,9 @@ export default async function FieldHome() {
     tx
       .select({ slug: forms.slug, name: forms.name, formType: forms.formType })
       .from(forms)
-      .where(and(eq(forms.orgId, session.orgId), eq(forms.isActive, true)))
+      // `usableForm()` is the same predicate the policies enforce, so what a
+      // worker is offered and what the database will accept cannot drift.
+      .where(and(eq(forms.orgId, session.orgId), eq(forms.isActive, true), usableForm()))
       .orderBy(asc(forms.slug)),
   );
 

@@ -39,10 +39,18 @@ export function OrgBrand({
             API route, so there is nothing for the image optimiser to do and a
             sizing mistake would distort someone's brand. `object-contain` keeps
             wide and square logos both intact. */}
+        {/* `title` as well as `alt`: a logo is a picture of a name, and a
+            reader who does not recognise it has no way to ask. `alt` answers
+            that for a screen reader and for a broken image, but a sighted
+            person hovering sees nothing — browsers stopped surfacing `alt` as
+            a tooltip long ago. This matters most where it is least obvious:
+            somebody supporting several NGOs, or looking at a screenshot, who
+            cannot tell whose installation they are in. */}
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           src={`/api/orgs/${encodeURIComponent(org.slug)}/logo?v=${org.logoStamp}`}
           alt={org.name}
+          title={org.name}
           className={`${dimensions.box} w-auto max-w-[200px] object-contain`}
         />
       </span>

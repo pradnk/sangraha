@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { getFieldType, resolveFieldConfig } from '@sangraha/form-engine';
 import {
@@ -65,6 +66,23 @@ export async function POST(request: Request) {
   return withSession(session, async (tx) => {
     const version = await loadFormVersionById(tx, body.formVersionId);
     if (!version) return NextResponse.json({ error: 'unknown_form_version' }, { status: 404 });
+
+    /*
+     * And the caller has to be allowed to use the form.
+     *
+     * Without this, somebody outside the audience could still mint presigned
+     * upload URLs and put bytes in the bucket. The submission that followed
+     * would be refused by `submissions_form_audience`, so no record appears —
+     * but the objects are already written, and an organisation pays to store
+     * photographs nobody can account for. RLS cannot reach this one: nothing is
+     * being inserted into a policy-protected table at this point.
+     */
+    const [allowed] = (await tx.execute(
+      sql`select app.can_use_form(${version.formId}::uuid) as ok`,
+    )) as unknown as { ok: boolean }[];
+    if (!allowed?.ok) {
+      return NextResponse.json({ error: 'unknown_form_version' }, { status: 404 });
+    }
 
     const field = version.fields.find((f) => f.key === body.fieldKey);
     if (!field) return NextResponse.json({ error: 'unknown_field' }, { status: 404 });

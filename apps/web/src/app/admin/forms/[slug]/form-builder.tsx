@@ -23,6 +23,7 @@ import { localise } from '@sangraha/form-engine';
 import { FormCapture } from '@/components/field/form-capture';
 import { FieldPalette, PLAIN_NAMES } from '@/components/admin/field-palette';
 import { SubjectTypePanel } from './subject-type-panel';
+import { AudiencePanel, type AudienceCandidate } from './audience-panel';
 import { FieldEditor, type OptionSetSummary } from '@/components/admin/field-editor';
 import {
   addFieldAction,
@@ -55,6 +56,9 @@ export function FormBuilder({
   subjectTypeId,
   subjectTypes,
   unregisteredCount,
+  audience,
+  audienceUserIds,
+  audienceCandidates,
   version,
   publishState,
   versionNumber,
@@ -72,6 +76,9 @@ export function FormBuilder({
   subjectTypeId: string | null;
   subjectTypes: { id: string; name: I18nText; code: string }[];
   unregisteredCount: number;
+  audience: 'everyone' | 'supervisors' | 'admins';
+  audienceUserIds: string[];
+  audienceCandidates: AudienceCandidate[];
   version: FormVersionDefinition | null;
   /** never = no version has ever gone out to field workers. */
   publishState: 'never' | 'draft' | 'published';
@@ -266,6 +273,15 @@ export function FormBuilder({
         subjectTypes={subjectTypes}
         unregisteredCount={unregisteredCount}
         locale={locale}
+      />
+
+      {/* Beside "who is it about", because they are the two questions about the
+          form itself rather than about any one question on it. */}
+      <AudiencePanel
+        slug={slug}
+        audience={audience}
+        selectedUserIds={audienceUserIds}
+        candidates={audienceCandidates}
       />
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_320px_360px]">

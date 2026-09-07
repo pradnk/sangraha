@@ -6,8 +6,10 @@ import {
   ConsentConflictError,
   attachments,
   claimAttachments,
+  correctSubmission,
   createSubjectFromRegistration,
   findDuplicateAnswers,
+  getSubmission,
   loadFormVersionById,
   objectSize,
   recordConsentEvents,
@@ -46,6 +48,16 @@ const bodySchema = z.object({
    * matters. `subjectId` is therefore omitted and filled in below.
    */
   consent: z.array(consentEventSchema.omit({ subjectId: true })).max(20).optional(),
+  /*
+   * Set when this is a rewrite of a record a supervisor sent back, rather than
+   * a new one.
+   *
+   * It rides on this endpoint rather than one of its own so that a correction
+   * inherits the retry queue unchanged. A worker who fixes an answer at the far
+   * end of a village is on exactly the connection the queue exists for, and a
+   * second delivery mechanism would be a second set of offline bugs.
+   */
+  correctsSubmissionId: z.string().uuid().optional(),
 });
 
 export async function POST(request: Request) {
@@ -59,7 +71,9 @@ export async function POST(request: Request) {
   const body = parsed.data;
 
   try {
-    return await captureSubmission(session, body);
+    return body.correctsSubmissionId
+      ? await applyCorrection(session, body, body.correctsSubmissionId)
+      : await captureSubmission(session, body);
   } catch (error) {
     /*
      * Out here, because in here the transaction has already rolled back.
@@ -151,6 +165,128 @@ class OversizedAttachmentError extends Error {
     super(`Attachment ${attachmentId} is ${actualBytes} bytes`);
     this.name = 'OversizedAttachmentError';
   }
+}
+
+/**
+ * Rewrites a record a supervisor sent back for correction.
+ *
+ * Deliberately *not* a variant of `captureSubmission`. The two share the shape
+ * of a submission and almost nothing about what has to happen to it: a
+ * correction creates no subject, records no consent, and must not insert a row.
+ * Folding it in would have meant four conditionals through the middle of the
+ * capture path, each one a chance to skip a step that a first send needs.
+ *
+ * Three things are deliberately taken from the stored record rather than from
+ * the request:
+ *
+ *   - **the form version**, so a correction is answered against the same
+ *     questions the record was captured under. A form republished in between
+ *     would otherwise silently re-key the answers, and the record's own
+ *     `form_version_id` would then describe a shape its data no longer has.
+ *   - **the subject and the location**, which a correction has no business
+ *     moving. Changing either is a different act from fixing an answer.
+ *   - **whether it may be corrected at all**, which `correctSubmission`
+ *     settles in SQL.
+ */
+async function applyCorrection(
+  session: Awaited<ReturnType<typeof requireSession>>,
+  body: z.infer<typeof bodySchema>,
+  submissionId: string,
+): Promise<NextResponse> {
+  return withSession(session, async (tx) => {
+    // RLS-scoped: another worker's record, or another tenant's, is simply not
+    // here. `getSubmission` also filters soft-deleted rows.
+    const existing = await getSubmission(tx, submissionId);
+    if (!existing) {
+      return NextResponse.json({ error: 'unknown_submission' }, { status: 404 });
+    }
+
+    /*
+     * Answered before the work, like the replay short-circuit in the capture
+     * path and for the same reason: the retry queue re-sends when a response is
+     * lost, and by then the record is already back in the queue as `submitted`.
+     * Reporting that as a failure would leave a corrected record looking unsent
+     * on the worker's device for ever.
+     */
+    if (existing.status !== 'rejected') {
+      return NextResponse.json(
+        { id: existing.id, duplicate: true, status: existing.status },
+        { status: 200 },
+      );
+    }
+
+    const version = await loadFormVersionById(tx, existing.formVersionId);
+    if (!version) {
+      return NextResponse.json({ error: 'unknown_form_version' }, { status: 404 });
+    }
+
+    const result = validateSubmission(version, body.data);
+    if (!result.ok) {
+      return NextResponse.json({ error: 'validation_failed', issues: result.errors }, { status: 422 });
+    }
+
+    /*
+     * Uniqueness still applies — a correction can introduce a clash as easily
+     * as a first send — but the record must not clash with the value it is
+     * already storing itself. That is what `excludeSubmissionId` is for.
+     */
+    const uniqueKeys = version.fields
+      .filter((field) => field.isUnique && !field.parentGroupId)
+      .map((field) => field.key);
+
+    const clashes = await findDuplicateAnswers(tx, {
+      formId: version.formId,
+      uniqueKeys,
+      data: result.data,
+      excludeSubmissionId: submissionId,
+    });
+
+    if (clashes.length > 0) {
+      const labelFor = (key: string) => {
+        const field = version.fields.find((f) => f.key === key);
+        return field ? localise(field.label, session.locale, key) : key;
+      };
+
+      return NextResponse.json(
+        {
+          error: 'duplicate_answer',
+          issues: clashes.map((clash) => ({
+            path: clash.fieldKey,
+            fieldKey: clash.fieldKey,
+            label: labelFor(clash.fieldKey),
+            value: clash.value,
+          })),
+        },
+        { status: 409 },
+      );
+    }
+
+    /*
+     * A correction may add a photograph, so newly uploaded files are claimed
+     * here exactly as they are on a first send. Files the worker *removed* are
+     * left where they are: their rows stay attached to this submission and
+     * their bytes stay in the bucket. Detaching them here would delete evidence
+     * on the strength of one edit, and the orphan sweeper is the place that
+     * work belongs — see `findOrphanedAttachments`.
+     */
+    const claiming = collectAttachmentIds(version, result.data);
+    await reconcileAttachments(tx, claiming);
+    await claimAttachments(tx, claiming, submissionId, existing.subjectId);
+
+    const outcome = await correctSubmission(tx, {
+      submissionId,
+      correctedBy: session.userId,
+      data: result.data,
+    });
+
+    if (!outcome.ok) {
+      // Lost a race with a supervisor or another tab. Not an error the worker
+      // can act on, and the record is safe either way.
+      return NextResponse.json({ id: submissionId, duplicate: true }, { status: 200 });
+    }
+
+    return NextResponse.json({ id: submissionId, corrected: true }, { status: 200 });
+  });
 }
 
 async function captureSubmission(

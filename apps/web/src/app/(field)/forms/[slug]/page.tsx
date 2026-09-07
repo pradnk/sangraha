@@ -5,6 +5,7 @@ import {
   forms,
   getSubject,
   loadCurrentFormVersion,
+  usableForm,
   userLocations,
 } from '@sangraha/db';
 import { requireSession, withSession } from '@/lib/auth/guard';
@@ -33,7 +34,10 @@ export default async function FormPage({
     const [form] = await tx
       .select({ id: forms.id, isActive: forms.isActive })
       .from(forms)
-      .where(and(eq(forms.orgId, session.orgId), eq(forms.slug, slug)))
+      // Including the audience, so a form kept off somebody's home screen is
+      // not simply one URL away. The submission policy refuses the write too;
+      // this is so they meet a "not found" rather than a failed send.
+      .where(and(eq(forms.orgId, session.orgId), eq(forms.slug, slug), usableForm()))
       .limit(1);
 
     if (!form || !form.isActive) return null;

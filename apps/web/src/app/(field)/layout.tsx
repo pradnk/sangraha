@@ -1,6 +1,10 @@
 import Link from 'next/link';
 import { and, eq } from 'drizzle-orm';
-import { countAwaitingReview, forms } from '@sangraha/db';
+import {
+  countAwaitingReview,
+  forms,
+  usableForm,
+} from '@sangraha/db';
 import { requireSession, withSession } from '@/lib/auth/guard';
 import { getOrgIdentityById } from '@/lib/org-identity';
 import { OrgBrand } from '@/components/brand/org-brand';
@@ -50,6 +54,8 @@ export default async function FieldLayout({ children }: { children: React.ReactN
               eq(forms.orgId, session.orgId),
               eq(forms.formType, 'registration'),
               eq(forms.isActive, true),
+              // No registration form shared with you is the same as none at all.
+              usableForm(),
             ),
           )
           .limit(1)

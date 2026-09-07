@@ -78,6 +78,17 @@ export function SangrahaLogo({
  * there already carries a truncated organisation name, the send queue, the
  * bell and a person's name — a full wordmark in the middle would push one of
  * those out, and the organisation's name is not the thing to sacrifice.
+ *
+ * **Quiet is not the same as invisible.** This was `text-slate-400` on white,
+ * which measures 2.56:1 — below the 4.5:1 WCAG AA needs for text, and below
+ * even the 3:1 floor for a UI element. It was not understated, it was
+ * unreadable, and on a sunlit phone screen it was gone altogether.
+ *
+ * Fixed with colour rather than size, which is the distinction that matters
+ * here: the mark carries the product's own accent and the word sits in
+ * slate-600 (7.58:1), at the same 18px it always was. Nothing grew, nothing
+ * moved, and the organisation's logo still leads on the left. Making this
+ * *bigger* would have been the wrong fix to the same complaint.
  */
 export function SangrahaCoBrand({ className = '' }: { className?: string }) {
   return (
@@ -85,8 +96,8 @@ export function SangrahaCoBrand({ className = '' }: { className?: string }) {
       aria-hidden
       className={`pointer-events-none inline-flex select-none items-center gap-1.5 ${className}`}
     >
-      <SangrahaMark size={18} className="shrink-0 text-slate-400" />
-      <span className="hidden text-sm font-medium tracking-tight text-slate-400 sm:inline">
+      <SangrahaMark size={18} className="shrink-0 text-brand-600" />
+      <span className="hidden text-sm font-medium tracking-tight text-slate-600 sm:inline">
         Sangraha
       </span>
     </span>

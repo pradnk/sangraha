@@ -7,6 +7,7 @@ export * from './analytics/index';
 export * from './admin/delete-organisation';
 export * from './queries/submissions';
 export * from './queries/form-builder';
+export * from './queries/form-access';
 export { toSnakeCase } from '@sangraha/form-engine';
 export * from './queries/option-sets';
 export * from './queries/admin-users';

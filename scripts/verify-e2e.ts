@@ -388,6 +388,189 @@ async function main(): Promise<void> {
       status: forged.status,
     });
 
+    /*
+     * --- Correcting a record that was sent back --------------------------
+     *
+     * Here rather than in `npm test` because what matters is the route: the
+     * correction shares an endpoint with a first send and is told apart only
+     * by `correctsSubmissionId`, so a dispatch mistake would send a rewrite
+     * down the insert path and file a second record. That is invisible to a
+     * query-level test, which never crosses the handler.
+     */
+    console.log('\nCorrecting a record a supervisor sent back');
+
+    const toCorrect = randomUUID();
+    const firstSend = await post({
+      clientUuid: toCorrect,
+      formVersionId: version.id,
+      locationId: assignment?.locationId ?? null,
+      data: { attendance_date: '2026-08-06', present: false, absence_reason: 'illness' },
+    });
+    const created = (await firstSend.json().catch(() => null)) as { id?: string } | null;
+
+    if (!created?.id) {
+      check('a record to correct was created', false, { status: firstSend.status });
+    } else {
+      // Sent back on the owner connection, standing in for the supervisor's
+      // review screen — this script runs as a field worker.
+      await db
+        .update(submissions)
+        .set({
+          status: 'rejected',
+          reviewNote: 'The date is wrong',
+          reviewedBy: null,
+          reviewedAt: new Date(),
+        })
+        .where(eq(submissions.id, created.id));
+
+      const correctionUuid = randomUUID();
+      const correction = await post({
+        clientUuid: correctionUuid,
+        formVersionId: version.id,
+        correctsSubmissionId: created.id,
+        data: { attendance_date: '2026-08-07', present: false, absence_reason: 'illness' },
+      });
+      check('a correction is accepted', correction.status === 200, {
+        status: correction.status,
+      });
+
+      const [after] = await db
+        .select({
+          status: submissions.status,
+          data: submissions.data,
+          reviewNote: submissions.reviewNote,
+        })
+        .from(submissions)
+        .where(eq(submissions.id, created.id));
+
+      check('the corrected record is back in the review queue', after?.status === 'submitted', {
+        status: after?.status,
+      });
+      check(
+        'the correction replaced the answers',
+        (after?.data as Record<string, unknown> | undefined)?.attendance_date === '2026-08-07',
+        after?.data,
+      );
+      check('the stale review note was cleared', after?.reviewNote === null, {
+        note: after?.reviewNote,
+      });
+
+      /*
+       * The one that cannot be checked below the route: a correction must not
+       * become a second row. A dispatch that fell through to the insert path
+       * would satisfy every assertion above and still double-count the visit.
+       *
+       * Keyed on the *correction's* own `clientUuid`, not the original's. An
+       * earlier version of this check counted rows under the original id and
+       * passed even with the dispatch deliberately removed — the fall-through
+       * insert files its new row under the new id, which is exactly the row
+       * being looked for.
+       */
+      const spawned = await db
+        .select({ id: submissions.id })
+        .from(submissions)
+        .where(eq(submissions.clientUuid, correctionUuid));
+      check('the correction did not file a second record', spawned.length === 0, {
+        spawned: spawned.length,
+      });
+
+      // A replay from the retry queue, which re-sends whenever a response is
+      // lost on the way back.
+      const replay = await post({
+        clientUuid: randomUUID(),
+        formVersionId: version.id,
+        correctsSubmissionId: created.id,
+        data: { attendance_date: '2026-08-07', present: false, absence_reason: 'illness' },
+      });
+      const replayBody = (await replay.json().catch(() => null)) as
+        | { duplicate?: boolean }
+        | null;
+      check(
+        'a replayed correction is a no-op rather than an error',
+        replay.status === 200 && replayBody?.duplicate === true,
+        { status: replay.status, body: replayBody },
+      );
+
+      const unknown = await post({
+        clientUuid: randomUUID(),
+        formVersionId: version.id,
+        correctsSubmissionId: randomUUID(),
+        data: { attendance_date: '2026-08-07', present: true },
+      });
+      check('correcting a record that is not yours is a 404', unknown.status === 404, {
+        status: unknown.status,
+      });
+    }
+
+    /*
+     * --- A form the worker is not an audience of ---------------------------
+     *
+     * At the route, because this is the hole that decided where the rule lives:
+     * `POST /api/submissions` takes a `formVersionId` straight from the client,
+     * so an audience enforced only in the screens would be no audience at all.
+     * Anyone who could read a uuid would be past it.
+     */
+    console.log('\nSubmitting against a form this worker is not an audience of');
+
+    await db.update(forms).set({ audience: 'admins' }).where(eq(forms.id, version.formId));
+    try {
+      const refused = await post({
+        clientUuid: randomUUID(),
+        formVersionId: version.id,
+        locationId: assignment?.locationId ?? null,
+        data: { attendance_date: '2026-08-09', present: true },
+      });
+      check('a form outside the audience is refused', refused.status >= 400, {
+        status: refused.status,
+      });
+
+      const landed = await db
+        .select({ id: submissions.id })
+        .from(submissions)
+        .where(
+          and(
+            eq(submissions.formId, version.formId),
+            sql`${submissions.data}->>'attendance_date' = '2026-08-09'`,
+          ),
+        );
+      check('and nothing was written', landed.length === 0, { rows: landed.length });
+
+      /*
+       * And no upload URL either. RLS cannot reach this one — minting a
+       * presigned PUT inserts nothing into a policy-protected table — so
+       * without an explicit check somebody outside the audience could still
+       * put bytes in the bucket that no record will ever account for.
+       */
+      const upload = await fetch(`${BASE_URL}/api/attachments`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', cookie },
+        body: JSON.stringify({
+          // A field that exists but is not an attachment. The demo org has no
+          // attachment field, and using a made-up key would make this pass on
+          // `unknown_field` whether the audience were checked or not.
+          formVersionId: version.id,
+          fieldKey: 'notes',
+          mimeType: 'image/jpeg',
+          sizeBytes: 1024,
+        }),
+      });
+      const uploadBody = (await upload.json().catch(() => null)) as { error?: string } | null;
+      /*
+       * The *reason* matters, not just the refusal. The audience check runs
+       * before the field lookup, so a working guard answers
+       * `unknown_form_version`; with the guard removed the same request gets as
+       * far as `not_an_attachment_field`. Asserting the code is what makes this
+       * fail when the guard goes.
+       */
+      check(
+        'no upload URL is minted for it either',
+        upload.status === 404 && uploadBody?.error === 'unknown_form_version',
+        { status: upload.status, body: uploadBody },
+      );
+    } finally {
+      await db.update(forms).set({ audience: 'everyone' }).where(eq(forms.id, version.formId));
+    }
+
     console.log(
       failures === 0
         ? '\n✓ All end-to-end checks passed\n'

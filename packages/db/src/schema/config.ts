@@ -4,6 +4,7 @@ import {
   integer,
   jsonb,
   pgTable,
+  primaryKey,
   text,
   timestamp,
   uniqueIndex,
@@ -11,7 +12,7 @@ import {
   type AnyPgColumn,
 } from 'drizzle-orm/pg-core';
 import type { FieldDataType, RuleNode } from '@sangraha/form-engine';
-import { formTypeEnum, formVersionStatusEnum } from './enums';
+import { formAudienceEnum, formTypeEnum, formVersionStatusEnum } from './enums';
 import { createdAt, i18nText, primaryId, updatedAt } from './_shared';
 import { organisations, users } from './tenancy';
 import { purposes } from './compliance';
@@ -97,6 +98,19 @@ export const forms = pgTable(
     }),
     /** The version field workers currently get. Null until first publish. */
     currentVersionId: uuid('current_version_id'),
+    /**
+     * Who may open and fill this form in.
+     *
+     * Defaults to `everyone`, which is what every form did before this column
+     * existed — narrowing is opt-in, so adding it took access away from nobody.
+     * Org admins are outside the question entirely: they must be able to edit
+     * and approve a form they are not themselves an audience of.
+     *
+     * Enforced in `app.can_use_form`, not here — see `sql/020-rls.sql`. The
+     * capture API takes a `formVersionId` straight from the client, so a check
+     * that lived only in the screens would not be a check.
+     */
+    audience: formAudienceEnum('audience').notNull().default('everyone'),
     isActive: boolean('is_active').notNull().default(true),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
@@ -104,6 +118,34 @@ export const forms = pgTable(
   (table) => [
     uniqueIndex('forms_org_slug_key').on(table.orgId, table.slug),
     index('forms_org_active_idx').on(table.orgId, table.isActive),
+  ],
+);
+
+/**
+ * Who may use a form, when its audience is `named`.
+ *
+ * Ignored for every other audience, and deliberately *not* cleared when the
+ * audience changes: an admin who switches to "all field workers" to cover a
+ * campaign and back again should find their list where they left it.
+ *
+ * Shaped like `user_locations`, which answers the same kind of question about
+ * places: composite key, cascade from both sides, and an index on the user so
+ * "which forms may this person use" is as cheap as the other direction.
+ */
+export const formAccess = pgTable(
+  'form_access',
+  {
+    formId: uuid('form_id')
+      .notNull()
+      .references(() => forms.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    createdAt: createdAt(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.formId, table.userId] }),
+    index('form_access_user_idx').on(table.userId),
   ],
 );
 
