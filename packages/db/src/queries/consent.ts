@@ -1,4 +1,5 @@
 import { createHmac } from 'node:crypto';
+import { authSecret } from '../auth/secret';
 import { and, desc, eq, isNull, sql } from 'drizzle-orm';
 import type { DbLike } from '../client';
 import { consentEvents } from '../schema/consent';
@@ -69,9 +70,10 @@ export interface ConsentActor {
  * once the subject row itself is destroyed.
  */
 export function subjectPseudonym(orgId: string, subjectId: string): string {
-  const pepper = process.env.AUTH_SECRET;
-  if (!pepper) throw new Error('AUTH_SECRET is not set; consent records cannot be pseudonymised');
-  return createHmac('sha256', pepper).update(`${orgId}:${subjectId}`).digest('hex');
+  // The same validation the session signer uses. This used to accept anything
+  // non-empty, which meant a pepper could be weaker than the key signing
+  // cookies while both came from the one variable.
+  return createHmac('sha256', authSecret()).update(`${orgId}:${subjectId}`).digest('hex');
 }
 
 /**

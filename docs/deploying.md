@@ -62,10 +62,19 @@ above, and in the other with `Missing script: "vercel-build"`.
 |---|---|
 | `DATABASE_URL` | **Required.** Pooled string, owner role. Runs migrations and generates analytics views. |
 | `DATABASE_APP_URL` | **Required.** Same database as `mis_app`, the non-owner role migrations create. Row-Level Security only applies to this one. |
-| `AUTH_SECRET` | **Required.** `openssl rand -base64 32` |
+| `AUTH_SECRET` | **Required.** `openssl rand -base64 32`. At least 32 characters, and not a placeholder — it is rejected by name. See below. |
 | `SIGNUP_MODE` | Optional. Defaults to `closed` in production — see below. |
 | `GOOGLE_TRANSLATE_CREDENTIALS` | Optional, base64 service-account JSON. `GOOGLE_APPLICATION_CREDENTIALS` is a file path and will not work here. |
 | `DATABASE_DIRECT_URL` | Optional. An unpooled connection, used only for role changes a transaction pooler will not carry. Derived from `DATABASE_URL` on Neon without being set. |
+
+**`AUTH_SECRET` is not optional and has no default.** It signs every session
+cookie and peppers the consent pseudonyms, so a guessable value lets anyone mint
+a session for any organisation and any role without a PIN — and nothing about
+the installation would look wrong. It must be at least 32 characters, and the
+placeholders people reach for are refused by name, including the one this
+repository used to ship in `.env.example`. That value was 39 characters and
+passed the length check, so an installation that never replaced it worked
+perfectly while signing sessions with a public string.
 
 `DATABASE_APP_URL` is a chicken-and-egg: the `mis_app` role does not exist until
 the first migration creates it. Set it to the password you intend to use — the

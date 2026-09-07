@@ -5,6 +5,50 @@ the two whole-tree reviews and the defects they turned up. Everything before
 that is condensed to a line, because the detail has been superseded by the code
 and by [`issues.md`](./issues.md), which records the decisions carried forward.
 
+### 2026-09-07 — The example auth secret was long enough to work
+
+Setting up the first organisation failed on:
+
+```
+Error: AUTH_SECRET must be set to at least 32 characters
+```
+
+`AUTH_SECRET` was simply not set in the deployment, which is the ordinary
+version of this. Looking at the check found the unordinary one. `.env.example`
+shipped
+
+```
+AUTH_SECRET=replace-me-with-a-random-32-byte-secret
+```
+
+— **39 characters, which passed the 32-character check.** An installation that
+copied the example file into its environment and never replaced the value ran
+perfectly well, signing every session cookie with a string published in this
+repository. Anyone reading the repo could mint a session for any organisation
+and any role, `org_admin` included, without a PIN. Nothing about such an
+installation looked wrong, because nothing was, until someone opened the file.
+
+The two checks that existed made it worse by being different: `session.ts`
+required 32 characters, `consent.ts` required only that something was set, so
+the pepper protecting consent pseudonyms could be weaker than the key signing
+cookies while both read the same variable.
+
+**`authSecret()` in `packages/db/src/auth/secret.ts` is now the only
+definition**, used by both. It refuses an absent value, anything containing
+`replace-me`, the handful of words people put in a field they mean to come back
+to, and anything under 32 characters — reporting the length but never the value,
+since these messages reach build logs. Like `migrate.ts`, it tells a build to
+use its platform's environment variables and a clone to use `.env`, rather than
+naming a file that does not exist where it is read.
+
+`.env.example` now leaves `AUTH_SECRET=` empty. Rejecting the placeholder while
+still shipping one would break every fresh clone, and the README already told
+you to generate one on the line that copies the file. A placeholder that works
+is worse than one that does not.
+
+Verified: the demo credentials still sign in on all four roles and a wrong PIN
+is still refused, so the signing path is unchanged for a correct secret.
+
 ### 2026-09-07 — The empty installation now has a landing page
 
 The fix above made the first screen correct and left it ugly: an amber notice

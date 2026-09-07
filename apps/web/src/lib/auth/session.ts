@@ -1,7 +1,7 @@
 import 'server-only';
 import { cookies } from 'next/headers';
 import { SignJWT, jwtVerify } from 'jose';
-import type { RequestContext } from '@sangraha/db';
+import { authSecret, type RequestContext } from '@sangraha/db';
 
 /**
  * Sessions.
@@ -27,12 +27,11 @@ export interface SessionPayload extends RequestContext {
   tokenVersion: number;
 }
 
+// Validated in one place, shared with the consent pepper that uses the same
+// value — see `authSecret`. A length check here and a truthiness check there
+// was how the example placeholder came to pass both.
 function secret(): Uint8Array {
-  const value = process.env.AUTH_SECRET;
-  if (!value || value.length < 32) {
-    throw new Error('AUTH_SECRET must be set to at least 32 characters');
-  }
-  return new TextEncoder().encode(value);
+  return new TextEncoder().encode(authSecret());
 }
 
 function maxAgeSeconds(): number {

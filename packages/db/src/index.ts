@@ -1,6 +1,7 @@
 export * from './schema/index';
 export * from './client';
 export * from './auth/pin';
+export * from './auth/secret';
 export * from './auth/login';
 export * from './queries/form-definitions';
 export * from './analytics/index';
