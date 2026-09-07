@@ -30,17 +30,23 @@ workspace root — so the `@sangraha/*` links and `tsx` resolve — and runs the
 `vercel-build` script in `apps/web/package.json`, which applies migrations
 before building.
 
-**`vercel.json` deliberately does not set `outputDirectory`.** Vercel applies it
-*relative to Root Directory*, so naming `apps/web/.next` there while Root
-Directory is `apps/web` asks for `apps/web` twice and the deploy fails on a path
-that reads like a missing build rather than a setting:
+**`vercel.json` sets `outputDirectory` to `.next`, not `apps/web/.next`.**
+Vercel resolves it *relative to Root Directory*, so naming `apps/web/.next`
+while Root Directory is `apps/web` asks for `apps/web` twice, and the deploy
+fails on a path that reads like a missing build rather than a setting:
 
 ```
 Error: The Next.js output directory "apps/web/.next" was not found at
 "/vercel/path0/apps/web/apps/web/.next"
 ```
 
-The framework preset already finds `.next` under Root Directory. Leave it out.
+**Check the dashboard's own Output Directory field is empty**, under Settings →
+Build and Deployment. It is a second, independent source for the same value, and
+it is where that error usually comes from once `vercel.json` is right — the
+message says "check your project settings" and means the dashboard, not the
+file. `vercel.json` is declared rather than left blank precisely so the file
+overrides whatever is in that field: omitting the key does not assert a default,
+it just yields to the dashboard.
 
 **If you move Root Directory to the repository root instead**, two things change
 together: `outputDirectory` must be added back as `apps/web/.next`, because

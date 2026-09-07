@@ -5,6 +5,32 @@ the two whole-tree reviews and the defects they turned up. Everything before
 that is condensed to a line, because the detail has been superseded by the code
 and by [`issues.md`](./issues.md), which records the decisions carried forward.
 
+### 2026-09-07 — The doubled output path came back, from the dashboard this time
+
+The migration succeeded and the build then failed on the error this day had
+already started with:
+
+```
+Error: The Next.js output directory "apps/web/.next" was not found at
+"/vercel/path0/apps/web/apps/web/.next"
+```
+
+`outputDirectory` had been removed from `vercel.json` hours earlier, and the
+deployment was well past that commit. The value was coming from the Vercel
+project's own **Output Directory** field, which is an independent source for the
+same setting — and removing the key from `vercel.json` is what let it through.
+A declared key overrides the dashboard; an absent one yields to it. Omitting it
+does not assert the default, which is what "the framework preset will find
+`.next` anyway" assumed.
+
+**`vercel.json` now says `"outputDirectory": ".next"`** — correct relative to a
+Root Directory of `apps/web`, and stated so the file wins over whatever the
+dashboard holds. That is the point of keeping this configuration in the
+repository at all: a setting nobody can read in a diff is a setting that drifts.
+`docs/deploying.md` now says to check the dashboard field is empty, and
+`docs/troubleshooting.md` carries the error text with the distinction between
+the two sources.
+
 ### 2026-09-07 — A role from Neon's Roles UI cannot be the role that serves requests
 
 Following the advice added earlier the same day — create the role in the console
