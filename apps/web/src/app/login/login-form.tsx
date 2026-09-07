@@ -1,6 +1,7 @@
 'use client';
 
 import { useActionState, useEffect, useState } from 'react';
+import Link from 'next/link';
 import { AlertCircle, LogIn } from 'lucide-react';
 import { LanguageSwitcher } from '@/components/field/language-switcher';
 import { UI_LOCALES } from '@/lib/i18n';
@@ -55,12 +56,34 @@ export function LoginForm({
   }, [orgSlug]);
 
   if (organisations.length === 0) {
+    /*
+     * This used to say `npm run db:seed`, which is wrong in the place the
+     * screen is actually read: a fresh deployment, where there is no shell to
+     * run it in and the demo organisation is not what anyone wants. `/start` is
+     * the answer everywhere — signup is open precisely while no organisation
+     * exists — so the seed script is now mentioned only where it can be run.
+     *
+     * English only, deliberately. This branch returns before the language
+     * switcher, and it is read once, by whoever just deployed, before any
+     * worker or organisation exists — so it is not field UI and its strings do
+     * not belong in `messages.ts`.
+     */
     return (
       <div className="mx-auto flex w-full max-w-md flex-1 flex-col justify-center px-5 py-8">
-        <p className="rounded-field bg-amber-50 p-5 text-field-base text-amber-900">
-          No organisation has been set up yet. Run <code>npm run db:seed</code> to create the
-          demo organisation.
-        </p>
+        <div className="rounded-field bg-amber-50 p-5 text-field-base text-amber-900">
+          <p>
+            No organisation has been set up yet.{' '}
+            <Link href="/start" className="font-semibold underline">
+              Set one up
+            </Link>
+            . Whoever does becomes its administrator, and signup closes behind them.
+          </p>
+          {process.env.NODE_ENV === 'development' ? (
+            <p className="mt-3 text-field-sm">
+              Or <code>npm run db:seed</code> for the demo organisation.
+            </p>
+          ) : null}
+        </div>
       </div>
     );
   }

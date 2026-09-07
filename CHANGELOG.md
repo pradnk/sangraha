@@ -5,6 +5,36 @@ the two whole-tree reviews and the defects they turned up. Everything before
 that is condensed to a line, because the detail has been superseded by the code
 and by [`issues.md`](./issues.md), which records the decisions carried forward.
 
+### 2026-09-07 — The first screen of a working deployment asked for a shell
+
+With everything else fixed, a fresh deployment's sign-in page said:
+
+> No organisation has been set up yet. Run `npm run db:seed` to create the demo
+> organisation.
+
+Wrong twice in the one place it is read. There is no shell on Vercel to run it
+in, and `db:seed` builds the *demo* organisation with invented people and
+rotating PINs — not what anyone wants on the installation they just deployed.
+The actual answer, `/start`, was not mentioned. It is the one screen the
+bootstrap exemption in `signup.ts` exists for, and the sign-in page did not link
+to it.
+
+**It now links to `/start`** and says what happens there: whoever sets the
+organisation up becomes its administrator and signup shuts behind them. The seed
+script is mentioned only under `NODE_ENV === 'development'`, where it can be run
+and where the demo data is the point.
+
+English only, and deliberately: that branch returns before the language
+switcher, and it is read once by whoever just deployed, before any worker or
+organisation exists. It is not field UI, so its strings do not go in
+`messages.ts`.
+
+Verified against an empty migrated database on a dev server: `/login` renders
+the message with the link, `/start` returns the setup form, and after an
+organisation exists `/login` shows it while `/start` — under `SIGNUP_MODE=closed`,
+as production defaults to — answers "Not accepting new organisations". The door
+shuts, which is what the new copy promises.
+
 ### 2026-09-07 — The doubled output path came back, from the dashboard this time
 
 The migration succeeded and the build then failed on the error this day had
