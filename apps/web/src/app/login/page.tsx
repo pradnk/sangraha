@@ -1,6 +1,7 @@
 import { listSignInOrganisations } from '@/lib/auth/organisations';
 import { getOrgIdentityBySlug } from '@/lib/org-identity';
 import { LoginForm } from './login-form';
+import { Welcome } from './welcome';
 
 /**
  * The login screen.
@@ -16,6 +17,15 @@ export default async function LoginPage({
   searchParams: Promise<{ org?: string; reason?: string }>;
 }) {
   const [params, organisations] = await Promise.all([searchParams, listSignInOrganisations()]);
+
+  /*
+   * An empty installation gets the landing page instead of a sign-in form,
+   * because there is nobody to sign in as yet. Returned here rather than from
+   * inside `LoginForm` so it stays a server component — it has no state and no
+   * handlers, and there is no reason to ship it to the browser. It also means
+   * `LoginForm` below can assume it has at least one organisation.
+   */
+  if (organisations.length === 0) return <Welcome />;
 
   const requested = params.org && organisations.some((org) => org.slug === params.org)
     ? params.org

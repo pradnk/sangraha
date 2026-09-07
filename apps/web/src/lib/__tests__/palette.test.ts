@@ -148,6 +148,31 @@ describe('co-brand contrast', () => {
     expect(contrast(brand['600']!, WHITE)).toBeGreaterThanOrEqual(4.5);
   });
 
+  /*
+   * The same question, asked of the first screen anyone sees.
+   *
+   * `welcome.tsx` sits on slate-50 rather than white, which is dimmer to start
+   * with, and its closing line is small and set below a rule — exactly the
+   * shape of text a lighter grey gets reached for. slate-500 there is 4.55:1:
+   * compliant by a hair, and one shade from the co-brand's mistake.
+   */
+  it('keeps the landing page readable on its slate-50 background', () => {
+    const SLATE_50 = '#f8fafc';
+    const SLATE_500 = '#64748b';
+
+    // Why the page does not use slate-500 for body text: the margin is gone.
+    expect(contrast(SLATE_500, SLATE_50)).toBeLessThan(5);
+    expect(contrast(SLATE_600, SLATE_50)).toBeGreaterThanOrEqual(4.5);
+
+    const page = readFileSync(
+      join(import.meta.dirname, '..', '..', 'app', 'login', 'welcome.tsx'),
+      'utf8',
+    );
+    expect(page, 'body and footer text should be slate-600 or darker').not.toMatch(
+      /text-slate-[1-5]00/,
+    );
+  });
+
   it('still uses those two colours', () => {
     const component = readFileSync(
       join(import.meta.dirname, '..', '..', 'components', 'brand', 'sangraha-mark.tsx'),

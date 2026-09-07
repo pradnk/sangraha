@@ -5,6 +5,41 @@ the two whole-tree reviews and the defects they turned up. Everything before
 that is condensed to a line, because the detail has been superseded by the code
 and by [`issues.md`](./issues.md), which records the decisions carried forward.
 
+### 2026-09-07 — The empty installation now has a landing page
+
+The fix above made the first screen correct and left it ugly: an amber notice
+box floating in the middle of an empty viewport, which still read as a fault
+rather than an invitation. It was also the only thing on the page — no mark, no
+indication of what had just been deployed.
+
+**`login/welcome.tsx`** replaces it. The Sangraha mark, one sentence on what
+the product is, the single action available, and four lines on what it does.
+A server component, returned from `login/page.tsx` before the sign-in form is
+reached, so it ships no client JavaScript and `LoginForm` can stop carrying an
+empty-state branch it should never have had.
+
+This is the one screen where the full mark belongs — inside a live organisation
+the header carries *theirs* and Sangraha co-brands quietly beside it. Here there
+is no organisation to lead, so nothing to be louder than.
+
+Every claim on it is one the README already makes under **What it does** and
+**Status**. The offline line says *send queue* rather than *works offline*
+deliberately: the retry queue is built, the full offline PWA is not, and a
+landing page that promises otherwise is a bug report waiting to be filed.
+
+Two details that were nearly wrong. The phone capability first carried a
+`WifiOff` icon — a crossed-out signal symbol, which reads as an error, on the
+page whose whole purpose was to stop looking like one. And the closing line was
+`slate-500` on `slate-50`: 4.55:1, compliant by a hair, one shade from the
+mistake `SangrahaCoBrand` already made. It is `slate-600` (7.24:1), and
+`palette.test.ts` — which already owns this question — now fails if any text on
+the page drops below `slate-600`.
+
+Rendered and checked at 390px and 1280px against an empty migrated database,
+with the phone width emulated through CDP rather than a resized window: the
+naive `--window-size=390` screenshot clips, and clips `/start` identically, so
+it was the harness and not the page.
+
 ### 2026-09-07 — The first screen of a working deployment asked for a shell
 
 With everything else fixed, a fresh deployment's sign-in page said:
