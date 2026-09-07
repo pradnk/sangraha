@@ -5,6 +5,30 @@ the two whole-tree reviews and the defects they turned up. Everything before
 that is condensed to a line, because the detail has been superseded by the code
 and by [`issues.md`](./issues.md), which records the decisions carried forward.
 
+### 2026-09-07 — The build's own error message pointed at a file that cannot exist
+
+A first deploy stopped on `DATABASE_APP_URL is not set.`, and the advice
+underneath it was `cp .env.example .env` — a shell command, about a file, in a
+build log on a platform with neither. The message was written for a fresh clone
+and was read most often somewhere it made no sense.
+
+It now branches on `VERCEL` / `CI` and, in a build, says to set the variable in
+the platform's environment and deploy again, naming the two ways it goes missing
+after you think you have set it: a variable scoped only to production is absent
+from a preview build, and a build reads the environment once, so retrying an
+existing build will never pick it up.
+
+`DATABASE_APP_URL` also gets a paragraph the other variables do not, because it
+is the one nobody expects. Every managed provider hands out a single connection
+string, so the natural response to the error is to reuse `DATABASE_URL` — and
+that role owns the tables, so it bypasses its own row-level security. The
+policies are the whole of the tenant boundary, which makes the failure mode
+silent: requests would isolate nothing and nothing would fail while they didn't.
+The message now says so, shows the shape of the URL to set, and notes the role
+does not need to exist first. The role name in it comes from `appRoleName()` —
+the new guard in `app-role.test.ts` refuses a literal, which is exactly the
+outcome it was added for.
+
 ### 2026-09-07 — A managed Postgres could not be migrated without a SQL console
 
 Found while setting up Neon. `ltree`, `pg_trgm` and `pgcrypto` were created only

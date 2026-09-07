@@ -21,6 +21,7 @@ Symptoms seen in practice, and what actually caused them.
 | No **Translate** button on a form | The organisation has only one language, or no translation credential. The builder says which; turn on a second language under **Organisation**. |
 | A CSV column is called `untitled_question` | The question was named after it was created, on a form published before Aug 2026. New forms take the key from the label. Existing keys cannot move without breaking the data already stored under them. |
 | Connection refused on 5432 | `npm run infra:up` |
+| `DATABASE_APP_URL is not set` in a deploy build | The app connects as a second, non-owner role and that variable names it; there is no default because it carries a password. [Deploying](./deploying.md) has the value to set. It cannot be `DATABASE_URL` — an owner bypasses RLS. On Vercel, check the variable is scoped to the environment being built, and redeploy rather than retrying the old build. |
 | `type "ltree" does not exist` during `db:migrate` | The `DATABASE_URL` role cannot create extensions. `sql/000-extensions.sql` creates all three before the first migration, so this now means a privilege problem rather than a missing step — grant that role `CREATE` on the database. |
 
 ---

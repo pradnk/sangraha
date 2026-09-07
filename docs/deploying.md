@@ -62,7 +62,25 @@ above, and in the other with `Missing script: "vercel-build"`.
 
 `DATABASE_APP_URL` is a chicken-and-egg: the `mis_app` role does not exist until
 the first migration creates it. Set it to the password you intend to use — the
-migration creates the role with that password from the URL you supply.
+migration creates the role with that password from the URL you supply. It is the
+same host and database as `DATABASE_URL`; only the role differs.
+
+```
+postgresql://mis_app:<a-password-you-choose>@<same-host>/<same-database>?sslmode=require
+```
+
+**It cannot be `DATABASE_URL`, and the build will not start without it.** Every
+managed provider hands out one connection string, so reusing it is the natural
+response — but that role owns the tables, and an owner bypasses its own
+row-level security. The policies in `sql/020-rls.sql` *are* the tenant boundary,
+so a request served on the owner connection isolates nothing and does not fail
+while it doesn't. `getOwnerDb()` exists for migrations, seeding and analytics
+DDL, and nothing else.
+
+Two Vercel-specific ways this variable goes missing after you have set it: a
+variable scoped only to **Production** is absent from a preview build, and a
+build reads the environment once, so an already-built deployment will not pick
+up a new value until you deploy again.
 
 ## 4. Deploy, then open `/start`
 

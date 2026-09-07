@@ -20,6 +20,7 @@ import { migrate } from 'drizzle-orm/postgres-js/migrator';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
 import { loadRootEnv } from '../../../load-env.mjs';
+import { appRoleName } from './app-role';
 
 // Configuration lives in one .env at the repo root, shared with the app and the
 // tests. Loaded here rather than via a `--env-file` flag so the script works
@@ -102,18 +103,59 @@ interface AppCredentials {
 }
 
 /**
- * The two ways this actually goes wrong are a missing `.env` on a fresh clone
- * and a half-filled one, so the message names the fix rather than the variable.
+ * The message names the fix rather than the variable — and which fix it is
+ * depends on where this is running.
+ *
+ * On a fresh clone it is a missing `.env`. In a deployment build there is no
+ * file to create and no shell to create it in, so `cp .env.example .env` was
+ * not merely unhelpful but misleading, in the place it was most often read: the
+ * build log of a first deploy.
+ *
+ * DATABASE_APP_URL gets an extra paragraph because it is the one variable
+ * nobody expects. Every managed provider hands out a single connection string,
+ * so the natural response to this error is to reuse it — and that quietly
+ * removes the tenant boundary rather than failing. The answer belongs here,
+ * where the question actually gets asked.
  */
 function missingEnvMessage(variable: string): string {
-  return [
-    `${variable} is not set.`,
-    '',
-    'If this is a fresh clone:',
-    '  cp .env.example .env',
-    '',
-    `Otherwise check that .env at the repo root defines ${variable}.`,
-  ].join('\n');
+  // Vercel sets VERCEL; other CI sets CI. Either way there is no .env to fix.
+  const deployed = Boolean(process.env.VERCEL || process.env.CI);
+
+  const lines = [`${variable} is not set.`, ''];
+
+  if (deployed) {
+    lines.push(
+      "Set it in your deployment platform's environment variables, then deploy",
+      'again — a build reads them once, so redeploying an existing build will',
+      'not pick it up. Check it is set for this environment in particular: a',
+      'variable added only to production is absent from a preview build.',
+    );
+  } else {
+    lines.push(
+      'If this is a fresh clone:',
+      '  cp .env.example .env',
+      '',
+      `Otherwise check that .env at the repo root defines ${variable}.`,
+    );
+  }
+
+  if (variable === 'DATABASE_APP_URL') {
+    lines.push(
+      '',
+      'This is a second connection string for the same database, differing only',
+      'in the role. That role need not exist yet — this script creates it from',
+      'the username and password in the URL you supply:',
+      '',
+      `  postgresql://${appRoleName()}:<a-password-you-choose>@<same-host>/<same-database>`,
+      '',
+      'It cannot be DATABASE_URL. That role owns the tables, and an owner',
+      'bypasses its own row-level security, which is the entire tenant',
+      'boundary. Serving requests on it would isolate nothing, and would not',
+      'fail while it did so.',
+    );
+  }
+
+  return lines.join('\n');
 }
 
 function parseAppCredentials(url: string | undefined): AppCredentials {
