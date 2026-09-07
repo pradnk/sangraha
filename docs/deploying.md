@@ -59,6 +59,7 @@ above, and in the other with `Missing script: "vercel-build"`.
 | `AUTH_SECRET` | **Required.** `openssl rand -base64 32` |
 | `SIGNUP_MODE` | Optional. Defaults to `closed` in production — see below. |
 | `GOOGLE_TRANSLATE_CREDENTIALS` | Optional, base64 service-account JSON. `GOOGLE_APPLICATION_CREDENTIALS` is a file path and will not work here. |
+| `DATABASE_DIRECT_URL` | Optional. An unpooled connection, used only for role changes a transaction pooler will not carry. Derived from `DATABASE_URL` on Neon without being set. |
 
 `DATABASE_APP_URL` is a chicken-and-egg: the `mis_app` role does not exist until
 the first migration creates it. Set it to the password you intend to use — the
@@ -81,6 +82,24 @@ Two Vercel-specific ways this variable goes missing after you have set it: a
 variable scoped only to **Production** is absent from a preview build, and a
 build reads the environment once, so an already-built deployment will not pick
 up a new value until you deploy again.
+
+**If the build cannot create the role**, create it yourself and deploy again —
+on Neon that is **Branches → Roles**, with the password you put in
+`DATABASE_APP_URL`. Give it no attributes at all; the migration grants it
+everything it needs and stops trying to create it once it exists. Neon handles
+role changes in its own control plane rather than in Postgres, and a refusal
+there arrives as an error that names neither the role nor the reason:
+
+```
+XX000  ddl_forwarding.c  SendDeltasToControlPlane
+```
+
+Ordinary schema DDL goes through the pooled connection perfectly well, which is
+what makes this one confusing to meet — every migration applies, and then the
+single statement that creates a role does not. The migration retries role
+changes on a direct connection by itself, deriving it from Neon's `-pooler`
+convention. `DATABASE_DIRECT_URL` sets one explicitly, for a provider whose
+pooled hostname cannot be rewritten that way.
 
 ## 4. Deploy, then open `/start`
 

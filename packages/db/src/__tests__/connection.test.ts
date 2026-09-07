@@ -8,13 +8,14 @@
  * ordinary testing, so the decision itself is what gets tested.
  */
 import { afterEach, describe, expect, it } from 'vitest';
-import { connectionProfile, looksPooled } from '../client';
+import { connectionProfile, looksPooled, unpooledConnection } from '../client';
 
 const ENV_KEYS = [
   'VERCEL',
   'AWS_LAMBDA_FUNCTION_NAME',
   'DATABASE_POOL_MAX',
   'DATABASE_POOLED',
+  'DATABASE_DIRECT_URL',
   'NODE_ENV',
 ];
 const saved = new Map(ENV_KEYS.map((key) => [key, process.env[key]]));
@@ -49,6 +50,47 @@ describe('detecting a pooled connection', () => {
 
     process.env.DATABASE_POOLED = 'false';
     expect(looksPooled('postgres://u:p@x-pooler.neon.tech/db')).toBe(false);
+  });
+});
+
+describe('reaching the same database without the pooler', () => {
+  /*
+   * Needed for role DDL, which a managed provider may handle outside Postgres.
+   * Neon refused `CREATE ROLE` on a pooled connection that had just applied
+   * every schema migration without complaint, and said only
+   * `XX000 ddl_forwarding.c SendDeltasToControlPlane`.
+   */
+  const NEON_POOLED = 'postgres://u:p@ep-cool-x-123-pooler.ap-southeast-1.aws.neon.tech/db';
+
+  it("rewrites Neon's pooled host, which is the direct one plus a suffix", () => {
+    expect(unpooledConnection(NEON_POOLED)).toBe(
+      'postgres://u:p@ep-cool-x-123.ap-southeast-1.aws.neon.tech/db',
+    );
+  });
+
+  it('has nothing to offer for a connection that is already direct', () => {
+    expect(unpooledConnection(DIRECT)).toBeNull();
+    expect(unpooledConnection('postgres://u:p@ep-x-123.aws.neon.tech/db')).toBeNull();
+  });
+
+  it('does not guess at a pooled shape it cannot rewrite', () => {
+    // Supabase moves the port and sometimes the username too. Guessing that
+    // would produce a plausible URL pointing at nothing; the explicit variable
+    // is the answer there.
+    expect(unpooledConnection('postgres://u:p@db.abc.supabase.co:6543/postgres')).toBeNull();
+    expect(unpooledConnection('postgres://u:p@host/db?pgbouncer=true')).toBeNull();
+  });
+
+  it('prefers an explicit DATABASE_DIRECT_URL over anything derived', () => {
+    process.env.DATABASE_DIRECT_URL = 'postgres://u:p@direct.example.com:5432/app';
+    expect(unpooledConnection(NEON_POOLED)).toBe('postgres://u:p@direct.example.com:5432/app');
+  });
+
+  it('reports nothing to retry when the direct URL is the one that just failed', () => {
+    // Otherwise the retry is the same statement against the same host, and the
+    // warning about falling back to a direct connection would be a lie.
+    process.env.DATABASE_DIRECT_URL = DIRECT;
+    expect(unpooledConnection(DIRECT)).toBeNull();
   });
 });
 

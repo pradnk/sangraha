@@ -5,6 +5,60 @@ the two whole-tree reviews and the defects they turned up. Everything before
 that is condensed to a line, because the detail has been superseded by the code
 and by [`issues.md`](./issues.md), which records the decisions carried forward.
 
+### 2026-09-07 — Neon refused to create the application role, twice over
+
+The schema migrated cleanly against Neon and then stopped on the statement that
+creates the role the application connects as:
+
+```
+code: 'XX000', file: 'ddl_forwarding.c', routine: 'SendDeltasToControlPlane'
+    at ensureAppRole (packages/db/src/migrate.ts:191)
+```
+
+Neon does not handle `CREATE ROLE` in Postgres alone — it forwards the change to
+its own control plane so the console stays in step — and a refusal there names
+neither the role nor the reason. Ordinary schema DDL crosses the same pooled
+connection without complaint, which is what makes it confusing: every migration
+applies, and then one statement does not.
+
+**Role changes are now retried on a direct connection**, derived from Neon's
+`-pooler` convention by `unpooledConnection`, with `DATABASE_DIRECT_URL` as the
+explicit form for a provider whose pooled hostname cannot be rewritten.
+Supabase's shape is deliberately not guessed at: it moves the port and sometimes
+the username, so a derived URL would point confidently at nothing.
+
+**And if the role still cannot be created, the error now says what to do**
+instead of printing a driver stack: create it in the provider's console with the
+password already in `DATABASE_APP_URL`, give it no attributes, deploy again. The
+migration grants it what it needs and stops trying to create it once it exists.
+
+**A second failure was waiting immediately behind the first.** `ensureAppRole`
+restated `ALTER ROLE ... NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS` on
+every run, and only a superuser may issue that — which nobody is on a managed
+provider. The statement whose entire purpose was to guarantee the tenant
+boundary was itself what stopped the deployment, on a role that already held
+none of those attributes. It is now verified and only altered when something
+differs, so the ordinary path issues no role DDL at all; `CREATE ROLE` leaves
+all four off to begin with.
+
+Verified against a non-superuser owner role built to stand in for
+`neondb_owner`, which is how both failures were reproduced locally:
+
+| | |
+|---|---|
+| fresh database, role absent | created, all four attributes off |
+| re-run, role already correct | no role DDL issued |
+| role holds `BYPASSRLS`, owner can revoke | revoked, migration continues |
+| role holds `BYPASSRLS`, owner cannot revoke | **refuses to migrate**, before the policies are applied |
+| owner cannot create roles | actionable error naming the console route |
+| role created by hand, owner cannot alter it | warns about the password it could not set, completes, and the role connects with RLS applying |
+
+The refusal is the point of the rewrite rather than a side effect: `SUPERUSER`
+or `BYPASSRLS` on the role that serves requests makes every policy in
+`020-rls.sql` decorative, so a deployment that cannot clear them should not
+proceed. `CREATEDB` and `CREATEROLE` are untidy rather than dangerous and only
+warn.
+
 ### 2026-09-07 — The build's own error message pointed at a file that cannot exist
 
 A first deploy stopped on `DATABASE_APP_URL is not set.`, and the advice

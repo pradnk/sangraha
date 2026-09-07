@@ -92,6 +92,37 @@ export function looksPooled(connectionString: string): boolean {
   );
 }
 
+/**
+ * The same database, reached without the transaction pooler.
+ *
+ * Returns null when there is nothing to change: the string is already direct,
+ * or its pooled shape is not one we can rewrite.
+ *
+ * Needed for role DDL. Neon does not handle `CREATE ROLE` in Postgres alone —
+ * it forwards the change to its control plane so the console stays in step, and
+ * through PgBouncer that is refused with an error naming neither the pooler nor
+ * the role:
+ *
+ *   XX000  ddl_forwarding.c  SendDeltasToControlPlane
+ *
+ * Ordinary schema DDL goes through the pooler perfectly well, which is what
+ * makes this confusing to meet: every migration applies, and then the one
+ * statement that creates a role does not.
+ *
+ * `DATABASE_DIRECT_URL` wins if set, for a provider whose pooled host is not
+ * derivable. Otherwise only Neon's convention is rewritten, because it is
+ * documented and unambiguous — the pooled endpoint is the direct one with
+ * `-pooler` appended. Supabase moves ports and sometimes the username too, so
+ * it is left to the explicit variable rather than guessed at.
+ */
+export function unpooledConnection(connectionString: string): string | null {
+  const explicit = process.env.DATABASE_DIRECT_URL?.trim();
+  if (explicit) return explicit === connectionString ? null : explicit;
+
+  if (!connectionString.includes('-pooler.')) return null;
+  return connectionString.replace('-pooler.', '.');
+}
+
 export function connectionProfile(connectionString: string): ConnectionProfile {
   const serverless = isServerless();
   const pooled = looksPooled(connectionString);
