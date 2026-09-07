@@ -10,6 +10,13 @@ Any Postgres 14+ that lets you create a role and these extensions: **`ltree`**,
 **`pg_trgm`**, **`pgcrypto`**. Neon and Supabase both do; Neon's free tier is
 enough to start.
 
+**You do not create them yourself.** `sql/000-extensions.sql` does, before the
+first migration, so a new database needs nothing done to it beyond existing.
+All three are trusted extensions, which is what lets the owner role install them
+without being superuser — nobody is, on a managed provider. If the first deploy
+ends in `type "ltree" does not exist`, the role you gave as `DATABASE_URL`
+lacks `CREATE` on the database.
+
 **Use the pooled connection string.** Serverless functions each open their own
 connections, and a direct connection will exhaust the database under load. On
 Neon that is the host containing `-pooler`; on Supabase it is port `6543`. The
@@ -18,32 +25,30 @@ idle timeouts all change.
 
 ## 2. Import the repository into Vercel
 
-**Leave Root Directory at the repository root — do not set it to `apps/web`.**
-`vercel.json` supplies everything Vercel needs from there: it runs the root
-`vercel-build`, which applies migrations before building, and declares
-`apps/web/.next` as the output.
+Set **Root Directory** to `apps/web`. Vercel detects Next.js, installs from the
+workspace root — so the `@sangraha/*` links and `tsx` resolve — and runs the
+`vercel-build` script in `apps/web/package.json`, which applies migrations
+before building.
 
-Setting Root Directory to `apps/web` fails, and the message names a path that
-looks like a bug in the repo rather than a setting:
+**`vercel.json` deliberately does not set `outputDirectory`.** Vercel applies it
+*relative to Root Directory*, so naming `apps/web/.next` there while Root
+Directory is `apps/web` asks for `apps/web` twice and the deploy fails on a path
+that reads like a missing build rather than a setting:
 
 ```
 Error: The Next.js output directory "apps/web/.next" was not found at
 "/vercel/path0/apps/web/apps/web/.next"
 ```
 
-That is `apps/web` twice — once from Root Directory and once from
-`outputDirectory` — because both are applied. Two more things break in that
-mode for the same reason, so do not simply drop `outputDirectory` to silence it:
-`npm install` would run inside `apps/web`, where `@sangraha/db` and
-`@sangraha/form-engine` are workspace links that resolve only from the root, and
-`tsx` — which the migration step runs on — is a devDependency of
-`packages/db`, so it is not installed by an install confined to the web app.
+The framework preset already finds `.next` under Root Directory. Leave it out.
 
-The build reaches outside `apps/web` three times by design: `next.config.ts`
-imports `../../load-env.mjs`, `transpilePackages` compiles `packages/db` and
-`packages/form-engine` from source, and the migration step is
-`scripts/deploy-migrate.ts`. Building from the root is what makes all three
-ordinary.
+**If you move Root Directory to the repository root instead**, two things change
+together: `outputDirectory` must be added back as `apps/web/.next`, because
+Vercel would otherwise look for `.next` beside the root `package.json`, and the
+root `vercel-build` takes over from the one in `apps/web`. Both scripts exist
+and do the same two things in the same order, one per mode. Changing the setting
+without changing `vercel.json` fails in one direction with the doubled path
+above, and in the other with `Missing script: "vercel-build"`.
 
 ## 3. Environment variables
 

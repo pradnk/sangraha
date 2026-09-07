@@ -5,7 +5,46 @@ the two whole-tree reviews and the defects they turned up. Everything before
 that is condensed to a line, because the detail has been superseded by the code
 and by [`issues.md`](./issues.md), which records the decisions carried forward.
 
-### 2026-09-07 — Vercel deploy failed with a doubled output path
+### 2026-09-07 — A managed Postgres could not be migrated without a SQL console
+
+Found while setting up Neon. `ltree`, `pg_trgm` and `pgcrypto` were created only
+by `infra/postgres-init/01-extensions.sql`, which Docker runs once on container
+boot. Nothing mounts an init directory on Neon, Supabase or RDS, so the first
+migration died on the first statement:
+
+```
+PostgresError: type "ltree" does not exist
+```
+
+Local development had always worked, which is what kept it hidden. The error
+names a missing type rather than a missing step, and the fix was to find a SQL
+console and paste three lines that were already in the repository — for a
+project whose deployment story is explicitly that an NGO never needs a shell.
+
+**`packages/db/sql/000-extensions.sql` now creates them**, applied by
+`migrate.ts` before the schema migrations rather than after, because migration
+0000 declares an `ltree` column and a trigram index and so cannot run without
+them. That ordering is the whole fix: in the ordinary position the file would
+apply cleanly and change nothing, the migration having already failed. All three
+are trusted extensions, so the owner role installs them without being
+superuser, which is what makes this work where nobody is. The Docker init hook
+and its mount are gone — one definition, and the one that runs everywhere.
+
+Verified against a database created empty: `plpgsql` only, 28 tables after,
+every one of them with RLS. With the file reduced to a no-op it fails exactly as
+a managed Postgres used to.
+
+**`/api/health` also stopped inventing the role name.** It asked `pg_roles` for
+a literal `'mis_app'` while `migrate.ts` creates whatever `DATABASE_APP_URL`
+names, so a deployment that chose any other username was reported `degraded`
+with `appRolePresent: false` — a 503 — on a database that was entirely healthy.
+It now calls `appRoleName()`, which has been the single definition since the
+grants file stopped hardcoding it; the health check was simply missed. The
+guard in `app-role.test.ts` only ever scanned `sql/`, and now scans the
+TypeScript under `apps/web/src` and `packages/db/src` too. SQL in a template
+literal is still SQL.
+
+### 2026-09-07 — Vercel deploy failed twice on the same disagreement
 
 Reported from a deployment attempt:
 
@@ -16,24 +55,34 @@ Error: The Next.js output directory "apps/web/.next" was not found at
 
 `apps/web` appears twice because both halves of the configuration were applied:
 Root Directory set to `apps/web` in the Vercel project, and
-`outputDirectory: "apps/web/.next"` from `vercel.json`. Nothing in the repo was
-broken, and nothing in the error says which setting to change — it reads as a
+`outputDirectory: "apps/web/.next"` from `vercel.json`, which Vercel resolves
+relative to Root Directory rather than to the repository. Nothing in the repo
+was broken, and the error names a path rather than a setting, so it reads as a
 missing build output.
 
-`docs/deploying.md` caused it. It instructed setting Root Directory to
-`apps/web` and then added that the repo root "also works", when only the root
-does: `vercel.json` was written for it, and dropping `outputDirectory` would not
-be enough to rescue the other mode. `installCommand` would run `npm install`
-inside `apps/web`, where `@sangraha/db` and `@sangraha/form-engine` resolve only
-as workspace links from the root, and `tsx` — which the migration step runs
-on — belongs to `packages/db` and would not be installed at all.
+The first fix went the wrong way — it standardised on Root Directory at the
+repository root and deleted the now-unused `vercel-build` from
+`apps/web/package.json`. The setting was never changed, so the next deploy
+found the script gone:
 
-**The repo root is now the only documented shape**, with the error text and the
-arithmetic behind it written down so the next person recognises it as a setting.
-`vercel.json` is unchanged; it was already correct. The `vercel-build` script in
-`apps/web/package.json` is removed — the root `vercel-build` is what Vercel
-runs, and a second script by that name one directory down was the thing that
-made the unsupported mode look supported.
+```
+npm error Missing script: "vercel-build"
+npm error location /vercel/path0/apps/web
+```
+
+That second failure is also what settled the question. Reaching a build script
+at all means the install had already succeeded from `apps/web`, so the two
+objections raised against that mode — that `npm install` there could not resolve
+the `@sangraha/*` workspace links, and that `tsx` would be missing because it
+belongs to `packages/db` — are both wrong on Vercel, which installs from the
+workspace root and hoists.
+
+**So `apps/web` stands, as originally documented, and `vercel.json` gives up
+`outputDirectory`** — the framework preset finds `.next` under Root Directory
+without being told. The script in `apps/web/package.json` is restored. The two
+modes each need their own `vercel.json`, which is the part that was never
+written down; `docs/deploying.md` now states both and the error each one gives
+when the setting and the file disagree.
 
 ### 2026-09-06 — A record sent back could not be corrected
 

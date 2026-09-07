@@ -161,6 +161,13 @@ Two stages, deliberately different:
   than a chain of diffs, and re-applying means a policy cannot drift. Ordering
   matters: functions (010) → immutability (015) → policies (020) → grants (030).
 
+One file breaks that pattern: `sql/000-extensions.sql` is applied *before* the
+schema migrations rather than after them, because the schema is declared in
+terms of what it provides — an `ltree` column, a trigram index. In the ordinary
+order it would apply cleanly and change nothing, migration 0000 having already
+failed with `type "ltree" does not exist`. Add an extension there, not to a
+migration and not to an init script.
+
 Adding a NOT NULL column to a populated table needs a default or a backfill —
 the generator will not do this for you.
 

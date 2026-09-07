@@ -30,7 +30,6 @@ services:
     command: -c idle_session_timeout=600000
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./postgres-init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U mis -d mis']
       interval: 5s

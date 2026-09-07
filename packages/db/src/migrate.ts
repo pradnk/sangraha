@@ -9,6 +9,9 @@
  *                grants and helper functions are easier to review and reason
  *                about as whole files than as a chain of diffs, and re-applying
  *                them means a policy can never silently drift.
+ *
+ * With one exception, `000-extensions.sql`, which the schema depends on and so
+ * has to run before it. See PRE_MIGRATION_SQL.
  */
 import { readFile, readdir } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
@@ -27,6 +30,16 @@ loadRootEnv();
 const here = dirname(fileURLToPath(import.meta.url));
 const packageRoot = join(here, '..');
 
+/**
+ * The one file in `sql/` applied before the schema migrations instead of after.
+ *
+ * `0000_initial_schema.sql` declares an `ltree` column and a trigram index, so
+ * the extensions have to be in place before Drizzle runs or the very first
+ * statement fails. Numbered 000 to say so; everything from 010 up depends on
+ * the schema existing and therefore runs at the end.
+ */
+const PRE_MIGRATION_SQL = '000-extensions.sql';
+
 async function main(): Promise<void> {
   const ownerUrl = process.env.DATABASE_URL;
   if (!ownerUrl) throw new Error(missingEnvMessage('DATABASE_URL'));
@@ -36,34 +49,51 @@ async function main(): Promise<void> {
   const client = postgres(ownerUrl, { max: 1, onnotice: () => {} });
   const db = drizzle(client);
 
+  const sqlDir = join(packageRoot, 'sql');
+
   try {
+    // Before the migrations, not after: the schema is declared in terms of
+    // types these provide.
+    await applySqlFile(client, sqlDir, PRE_MIGRATION_SQL, appCredentials.username);
+
     console.log('→ applying schema migrations');
     await migrate(db, { migrationsFolder: join(packageRoot, 'migrations') });
 
     console.log(`→ ensuring application role "${appCredentials.username}"`);
     await ensureAppRole(client, appCredentials);
 
-    const sqlDir = join(packageRoot, 'sql');
-    const files = (await readdir(sqlDir)).filter((f) => f.endsWith('.sql')).sort();
+    const files = (await readdir(sqlDir))
+      .filter((f) => f.endsWith('.sql') && f !== PRE_MIGRATION_SQL)
+      .sort();
     for (const file of files) {
-      console.log(`→ applying ${file}`);
-      const contents = await readFile(join(sqlDir, file), 'utf8');
-      /*
-       * A role name cannot be a bind parameter in DDL, and `030-grants.sql`
-       * has to name one. Substituted here so there is a single source for it —
-       * the file used to say `mis_app` literally, which meant any deployment
-       * whose DATABASE_APP_URL named a different user migrated successfully and
-       * then failed every request on a permission error.
-       */
-      await client.unsafe(
-        contents.replaceAll('@APP_ROLE@', quoteIdentifier(appCredentials.username)),
-      );
+      await applySqlFile(client, sqlDir, file, appCredentials.username);
     }
 
     console.log('✓ database is up to date');
   } finally {
     await client.end();
   }
+}
+
+/**
+ * Applies one file from `sql/`.
+ *
+ * The `@APP_ROLE@` substitution is the reason this is not just a read and an
+ * execute: a role name cannot be a bind parameter in DDL, and `030-grants.sql`
+ * has to name one. Substituted here so there is a single source for it — the
+ * file used to say `mis_app` literally, which meant any deployment whose
+ * DATABASE_APP_URL named a different user migrated successfully and then failed
+ * every request on a permission error.
+ */
+async function applySqlFile(
+  client: postgres.Sql,
+  sqlDir: string,
+  file: string,
+  appRole: string,
+): Promise<void> {
+  console.log(`→ applying ${file}`);
+  const contents = await readFile(join(sqlDir, file), 'utf8');
+  await client.unsafe(contents.replaceAll('@APP_ROLE@', quoteIdentifier(appRole)));
 }
 
 interface AppCredentials {

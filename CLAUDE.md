@@ -87,6 +87,14 @@ Two stages, deliberately different:
   than a chain of diffs, and re-applying means a policy cannot drift. Ordering
   matters: functions (010) → policies (020) → grants (030).
 
+**`sql/000-extensions.sql` runs before the migrations, not after.** It is the
+only file that does. The schema is declared in terms of what it provides — an
+`ltree` column, a trigram index — so applied in the ordinary order it would
+succeed and change nothing, because migration 0000 has already failed with
+`type "ltree" does not exist`. Extensions belong there and nowhere else: they
+used to be created only by a Docker init hook, which meant local development
+worked and every managed Postgres needed a SQL console first.
+
 Adding a NOT NULL column to a populated table needs a default or a backfill —
 the generator will not do this for you.
 

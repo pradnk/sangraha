@@ -227,16 +227,19 @@ migrations under an advisory lock, and the first person to open `/start` on a
 fresh deployment creates the organisation and becomes its administrator, after
 which signup shuts.
 
-You need Postgres 14+ with `ltree`, `pg_trgm` and `pgcrypto`, a **pooled**
+You need Postgres 14+ that permits `ltree`, `pg_trgm` and `pgcrypto` — the
+migration creates them, so a bare database is enough — a **pooled**
 connection string, three required environment variables (`DATABASE_URL`,
 `DATABASE_APP_URL`, `AUTH_SECRET`), and S3-compatible object storage if you use
 photo, file or signature questions. `GET /api/health` tells you whether it
 worked — treat `rlsEnabled: false` as an outage, not a warning.
 
-Import the repository into Vercel and **leave Root Directory at the repository
-root**; `vercel.json` is written for that and points Vercel at `apps/web/.next`
-itself. Setting it to `apps/web` fails with an output directory that has
-`apps/web` in it twice.
+Import the repository into Vercel and set **Root Directory** to `apps/web`.
+`vercel.json` is written for that and deliberately leaves `outputDirectory`
+unset — Vercel resolves it relative to Root Directory, so naming
+`apps/web/.next` there makes the deploy fail on a path with `apps/web` in it
+twice. Moving Root Directory to the repository root means changing `vercel.json`
+with it; [docs/deploying.md](./docs/deploying.md) has both.
 
 Full instructions, including the environment variable table and the reasoning
 about connection pooling and regions, are in

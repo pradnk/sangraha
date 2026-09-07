@@ -71,6 +71,48 @@ describe('the declarative SQL layer', () => {
     }
   });
 
+  it('is not the only place a hardcoded name could hide', async () => {
+    /*
+     * The sibling of the guard above, and the gap it left. `/api/health` asked
+     * `pg_roles` for a literal `mis_app` long after `030-grants.sql` had stopped
+     * naming one, so a deployment that chose another username was reported
+     * degraded — 503, appRolePresent: false — on a perfectly healthy database.
+     * SQL in TypeScript is still SQL.
+     *
+     * `scripts/` is deliberately out of scope: `free-connections.ts` names the
+     * local development roles on purpose, and it never runs against a
+     * deployment.
+     */
+    const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..');
+    const roots = [join(repoRoot, 'packages', 'db', 'src'), join(repoRoot, 'apps', 'web', 'src')];
+
+    let scanned = 0;
+    for (const root of roots) {
+      const entries = await readdir(root, { recursive: true, withFileTypes: true });
+      for (const entry of entries) {
+        if (!entry.isFile()) continue;
+        if (!entry.name.endsWith('.ts') && !entry.name.endsWith('.tsx')) continue;
+        const path = join(entry.parentPath ?? entry.path, entry.name);
+        // The one legitimate definition, and the tests that exercise it.
+        if (path.includes('__tests__') || entry.name === 'app-role.ts') continue;
+
+        scanned += 1;
+        const lines = (await readFile(path, 'utf8')).split('\n');
+        for (const [index, line] of lines.entries()) {
+          const code = line.trimStart();
+          // Comments may still discuss the old name; only statements matter.
+          if (code.startsWith('//') || code.startsWith('*') || code.startsWith('/*')) continue;
+          expect(/'mis_app'|"mis_app"|\bmis_app\b/.test(line), `${path}:${index + 1}: ${code}`).toBe(
+            false,
+          );
+        }
+      }
+    }
+
+    // A path typo would otherwise make this pass by scanning nothing.
+    expect(scanned).toBeGreaterThan(50);
+  });
+
   it('substitutes the placeholder for a quoted identifier', () => {
     // Exactly what migrate.ts does, asserted so the two cannot disagree about
     // the token. A role name is not parameterisable in DDL, so this is the
