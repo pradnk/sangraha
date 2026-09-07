@@ -18,9 +18,32 @@ idle timeouts all change.
 
 ## 2. Import the repository into Vercel
 
-Set **Root Directory** to `apps/web`. Vercel detects Next.js and picks up the
-`vercel-build` script, which applies migrations before building. Leaving Root
-Directory at the repo root also works — there is a `vercel.json` for it.
+**Leave Root Directory at the repository root — do not set it to `apps/web`.**
+`vercel.json` supplies everything Vercel needs from there: it runs the root
+`vercel-build`, which applies migrations before building, and declares
+`apps/web/.next` as the output.
+
+Setting Root Directory to `apps/web` fails, and the message names a path that
+looks like a bug in the repo rather than a setting:
+
+```
+Error: The Next.js output directory "apps/web/.next" was not found at
+"/vercel/path0/apps/web/apps/web/.next"
+```
+
+That is `apps/web` twice — once from Root Directory and once from
+`outputDirectory` — because both are applied. Two more things break in that
+mode for the same reason, so do not simply drop `outputDirectory` to silence it:
+`npm install` would run inside `apps/web`, where `@sangraha/db` and
+`@sangraha/form-engine` are workspace links that resolve only from the root, and
+`tsx` — which the migration step runs on — is a devDependency of
+`packages/db`, so it is not installed by an install confined to the web app.
+
+The build reaches outside `apps/web` three times by design: `next.config.ts`
+imports `../../load-env.mjs`, `transpilePackages` compiles `packages/db` and
+`packages/form-engine` from source, and the migration step is
+`scripts/deploy-migrate.ts`. Building from the root is what makes all three
+ordinary.
 
 ## 3. Environment variables
 

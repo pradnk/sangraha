@@ -233,6 +233,11 @@ connection string, three required environment variables (`DATABASE_URL`,
 photo, file or signature questions. `GET /api/health` tells you whether it
 worked — treat `rlsEnabled: false` as an outage, not a warning.
 
+Import the repository into Vercel and **leave Root Directory at the repository
+root**; `vercel.json` is written for that and points Vercel at `apps/web/.next`
+itself. Setting it to `apps/web` fails with an output directory that has
+`apps/web` in it twice.
+
 Full instructions, including the environment variable table and the reasoning
 about connection pooling and regions, are in
 **[docs/deploying.md](./docs/deploying.md)**.

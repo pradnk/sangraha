@@ -5,6 +5,36 @@ the two whole-tree reviews and the defects they turned up. Everything before
 that is condensed to a line, because the detail has been superseded by the code
 and by [`issues.md`](./issues.md), which records the decisions carried forward.
 
+### 2026-09-07 — Vercel deploy failed with a doubled output path
+
+Reported from a deployment attempt:
+
+```
+Error: The Next.js output directory "apps/web/.next" was not found at
+"/vercel/path0/apps/web/apps/web/.next"
+```
+
+`apps/web` appears twice because both halves of the configuration were applied:
+Root Directory set to `apps/web` in the Vercel project, and
+`outputDirectory: "apps/web/.next"` from `vercel.json`. Nothing in the repo was
+broken, and nothing in the error says which setting to change — it reads as a
+missing build output.
+
+`docs/deploying.md` caused it. It instructed setting Root Directory to
+`apps/web` and then added that the repo root "also works", when only the root
+does: `vercel.json` was written for it, and dropping `outputDirectory` would not
+be enough to rescue the other mode. `installCommand` would run `npm install`
+inside `apps/web`, where `@sangraha/db` and `@sangraha/form-engine` resolve only
+as workspace links from the root, and `tsx` — which the migration step runs
+on — belongs to `packages/db` and would not be installed at all.
+
+**The repo root is now the only documented shape**, with the error text and the
+arithmetic behind it written down so the next person recognises it as a setting.
+`vercel.json` is unchanged; it was already correct. The `vercel-build` script in
+`apps/web/package.json` is removed — the root `vercel-build` is what Vercel
+runs, and a second script by that name one directory down was the thing that
+made the unsupported mode look supported.
+
 ### 2026-09-06 — A record sent back could not be corrected
 
 Reported from use: open a rejected record under **What I have sent** and it is
